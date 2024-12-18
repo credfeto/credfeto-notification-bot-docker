@@ -3,7 +3,7 @@ services:
   notification-bot:
     container_name: notification-bot
     hostname: notification-bot
-    image: credfeto/notification-bot:latest
+    image: docker-registry.markridgwell.com/credfeto/notification-bot:latest
     restart: unless-stopped
     stop_grace_period: 500s
     stop_signal: SIGINT
