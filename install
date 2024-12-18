@@ -13,17 +13,17 @@ echo "Script Dir: $BASEDIR"
 [ -f "$BASEDIR/appsettings-local.json" ] || die "Missing appsettings-local.json"
 
 echo "Updating systemd scripts"
-sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.service" /etc/systemd/system/notification-bot.service
-sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.timer" /etc/systemd/system/notification-bot.timer
+sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.service" /etc/systemd/system/credfeto-notification-bot.service
+sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.timer" /etc/systemd/system/credfeto-notification-bot.timer
 
 
 echo "systemd reload"
 sudo systemctl daemon-reload
 
-echo "Enable notification-bot.timer"
-sudo systemctl enable notification-bot.timer
+echo "Enable credfeto-notification-bot.timer"
+sudo systemctl enable credfeto-notification-bot.timer
 
-echo "Start notification-bot.timer"
-sudo systemctl start notification-bot.timer
+echo "Start credfeto-notification-bot.timer"
+sudo systemctl start credfeto-notification-bot.timer
 
 echo "Done"
