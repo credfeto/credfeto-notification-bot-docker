@@ -1,0 +1,11 @@
+services:
+
+  notification-bot:
+    container_name: notification-bot
+    hostname: notification-bot
+    image: credfeto/notification-bot:latest
+    restart: unless-stopped
+    stop_grace_period: 500s
+    stop_signal: SIGINT
+    volumes:
+      - ./appsettings-local.json:/usr/src/app/appsettings-local.json:r
