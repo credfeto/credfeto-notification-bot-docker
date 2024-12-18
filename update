@@ -1,0 +1,23 @@
+#! /bin/sh
+
+PROG=$0
+die() {
+    echo
+    echo "$@"
+    exit 1
+}
+
+BASEDIR="$(dirname "$(readlink -f "$0")")"
+echo "Script Dir: $BASEDIR"
+
+cd "$BASEDIR" || die "Could not change to $BASEDIR"
+
+echo "Updating Repo"
+git pull
+
+[ -f "$BASEDIR/appsettings-local.json" ] || die "Missing appsettings-local.json"
+
+echo "Updating docker"
+sudo docker compose build && sudo docker compose up -d
+
+echo "Done"

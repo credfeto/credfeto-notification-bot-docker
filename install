@@ -1,0 +1,29 @@
+#! /bin/sh
+
+PROG=$0
+die() {
+    echo
+    echo "$@"
+    exit 1
+}
+
+BASEDIR="$(dirname "$(readlink -f "$0")")"
+echo "Script Dir: $BASEDIR"
+
+[ -f "$BASEDIR/appsettings-local.json" ] || die "Missing appsettings-local.json"
+
+echo "Updating systemd scripts"
+sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.service" /etc/systemd/system/notification-bot.service
+sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.timer" /etc/systemd/system/notification-bot.timer
+
+
+echo "systemd reload"
+sudo systemctl daemon-reload
+
+echo "Enable notification-bot.timer"
+sudo systemctl enable notification-bot.timer
+
+echo "Start notification-bot.timer"
+sudo systemctl start notification-bot.timer
+
+echo "Done"
