@@ -1,4 +1,13 @@
 services:
+  watchtower:
+    image: nickfedor/watchtower:latest
+    container_name: watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always
+    environment:
+      WATCHTOWER_NOTIFICATIONS_HOSTNAME: notification-bot
+      WATCHTOWER_POLL_INTERVAL: 3600
 
   notification-bot:
     container_name: notification-bot
