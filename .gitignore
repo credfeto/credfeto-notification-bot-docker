@@ -1,3 +1,5 @@
 /.env
 /.idea/
 appsettings-local.json
+/dispatcher/appsettings-local.json
+/notification/appsettings-local.json

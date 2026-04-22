@@ -17,4 +17,14 @@ services:
     stop_grace_period: 500s
     stop_signal: SIGINT
     volumes:
-      - ./appsettings-local.json:/usr/src/app/appsettings-local.json:r
+      - ./notification/appsettings-local.json:/usr/src/app/appsettings-local.json:r
+
+  dispatcher-bot:
+    container_name: dispatcher-bot
+    hostname: dispatcher-bot
+    image: docker-registry.markridgwell.com/credfeto/dispatcher-bot:latest
+    restart: unless-stopped
+    stop_grace_period: 500s
+    stop_signal: SIGINT
+    volumes:
+      - ./dispatcher/appsettings-local.json:/usr/src/app/appsettings-local.json:r
