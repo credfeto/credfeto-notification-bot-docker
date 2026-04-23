@@ -17,6 +17,14 @@ git pull
 
 [ -f "$BASEDIR/appsettings-local.json" ] || die "Missing appsettings-local.json"
 
+echo "Ensuring dispatcher-data volume folder exists"
+sudo mkdir -p /data/dispatcher
+sudo docker volume create --driver local \
+    --opt type=none \
+    --opt o=bind \
+    --opt device=/data/dispatcher \
+    dispatcher-data 2>/dev/null || true
+
 echo "Updating docker"
 sudo docker compose pull && sudo docker compose up -d
 
