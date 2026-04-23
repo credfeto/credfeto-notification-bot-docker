@@ -7,7 +7,7 @@ services:
     restart: always
     environment:
       WATCHTOWER_NOTIFICATIONS_HOSTNAME: notification-bot
-      WATCHTOWER_POLL_INTERVAL: 3600
+      WATCHTOWER_POLL_INTERVAL: 60
 
   notification-bot:
     container_name: notification-bot
@@ -28,3 +28,9 @@ services:
     stop_signal: SIGINT
     volumes:
       - ./dispatcher/appsettings-local.json:/usr/src/app/appsettings-local.json:r
+      - dispatcher-data:/usr/src/app/data
+
+volumes:
+  dispatcher-data:
+    external: true
+    name: dispatcher-data
