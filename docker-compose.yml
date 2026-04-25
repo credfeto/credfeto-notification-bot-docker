@@ -30,6 +30,20 @@ services:
       - ./dispatcher/appsettings-local.json:/usr/src/app/appsettings-local.json:r
       - dispatcher-data:/usr/src/app/data
 
+  github-api-proxy:
+    container_name: github-api-proxy
+    hostname: github-api-proxy
+    image: docker-registry.markridgwell.com/credfeto/github-api-proxy:latest
+    restart: unless-stopped
+    stop_grace_period: 500s
+    stop_signal: SIGINT
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - PROXY_TOKEN=${PROXY_TOKEN}
+      - GITHUB_PAT=${GITHUB_PAT}
+      - PORT=3000
+
 volumes:
   dispatcher-data:
     external: true
