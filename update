@@ -15,7 +15,9 @@ cd "$BASEDIR" || die "Could not change to $BASEDIR"
 echo "Updating Repo"
 git pull
 
-[ -f "$BASEDIR/appsettings-local.json" ] || die "Missing appsettings-local.json"
+[ -f "$BASEDIR/notification/appsettings-local.json" ] || die "Missing notification/appsettings-local.json"
+[ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
+[ -f "$BASEDIR/.env" ] || die "Missing .env file"
 
 echo "Ensuring dispatcher-data volume folder exists"
 sudo mkdir -p /data/dispatcher
