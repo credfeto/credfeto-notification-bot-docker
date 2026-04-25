@@ -26,4 +26,14 @@ sudo systemctl enable credfeto-notification-bot.timer
 echo "Start credfeto-notification-bot.timer"
 sudo systemctl start credfeto-notification-bot.timer
 
+echo "Configuring firewall rules for TCP port 3000 (private networks only)"
+# IPv4 private ranges
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="10.0.0.0/8" port port="3000" protocol="tcp" accept'
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="172.16.0.0/12" port port="3000" protocol="tcp" accept'
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="192.168.0.0/16" port port="3000" protocol="tcp" accept'
+# IPv6 private ranges (ULA fc00::/7 and link-local fe80::/10)
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv6" source address="fc00::/7" port port="3000" protocol="tcp" accept'
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv6" source address="fe80::/10" port port="3000" protocol="tcp" accept'
+sudo firewall-cmd --reload
+
 echo "Done"
