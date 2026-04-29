@@ -40,9 +40,10 @@ services:
     ports:
       - "${PORT:-3000}:3000"
     environment:
-      - PROXY_TOKEN=${PROXY_TOKEN}
-      - GITHUB_PAT=${GITHUB_PAT}
+      - CREDENTIALS_FILE=/proxy/credentials.json
       - PORT=3000
+    volumes:
+      - ./proxy/credentials.json:/proxy/credentials.json:ro
 
 volumes:
   dispatcher-data:
