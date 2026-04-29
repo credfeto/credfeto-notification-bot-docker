@@ -3,3 +3,4 @@
 appsettings-local.json
 /dispatcher/appsettings-local.json
 /notification/appsettings-local.json
+/proxy/credentials.json
