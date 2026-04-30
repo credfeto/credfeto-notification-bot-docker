@@ -1,6 +1,5 @@
 #! /bin/sh
 
-PROG=$0
 die() {
     echo
     echo "$@"
@@ -18,6 +17,8 @@ git pull
 [ -f "$BASEDIR/notification/appsettings-local.json" ] || die "Missing notification/appsettings-local.json"
 [ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
 [ -f "$BASEDIR/.env" ] || die "Missing .env file"
+[ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
+chmod 644 "$BASEDIR/proxy/credentials.json"
 
 echo "Ensuring dispatcher-data volume folder exists"
 sudo mkdir -p /data/dispatcher

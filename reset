@@ -1,0 +1,32 @@
+#!/bin/sh
+
+die() {
+    printf '\n\033[31m✗\033[0m %s\n' "$*"
+    exit 1
+}
+
+success() {
+    printf '\n\033[32m✓\033[0m %s\n' "$*"
+}
+
+info() {
+    printf '\n\033[32m→\033[0m %s\n' "$*"
+}
+
+BASEDIR="$(dirname "$(readlink -f "$0")")"
+
+cd "$BASEDIR" || die "Could not change to ${BASEDIR}"
+
+info "Stopping containers"
+sudo docker compose stop || die "Failed to stop containers"
+
+info "Removing containers"
+sudo docker compose rm -f || die "Failed to remove containers"
+
+info "Pruning Docker system"
+sudo docker system prune -f || die "Failed to prune Docker system"
+
+info "Running install"
+"${BASEDIR}/install" || die "Install failed"
+
+success "Reset complete"
