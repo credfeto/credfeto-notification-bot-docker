@@ -1,6 +1,5 @@
 #! /bin/sh
 
-PROG=$0
 die() {
     echo
     echo "$@"
@@ -11,6 +10,9 @@ BASEDIR="$(dirname "$(readlink -f "$0")")"
 echo "Script Dir: $BASEDIR"
 
 [ -f "$BASEDIR/appsettings-local.json" ] || die "Missing appsettings-local.json"
+
+[ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
+chmod 644 "$BASEDIR/proxy/credentials.json"
 
 echo "Updating systemd scripts"
 sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.service" /etc/systemd/system/credfeto-notification-bot.service
