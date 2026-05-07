@@ -9,7 +9,8 @@ die() {
 BASEDIR="$(dirname "$(readlink -f "$0")")"
 echo "Script Dir: $BASEDIR"
 
-[ -f "$BASEDIR/appsettings-local.json" ] || die "Missing appsettings-local.json"
+[ -f "$BASEDIR/notification/appsettings-local.json" ] || die "Missing notification/appsettings-local.json"
+[ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
 
 [ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
 chmod 644 "$BASEDIR/proxy/credentials.json"

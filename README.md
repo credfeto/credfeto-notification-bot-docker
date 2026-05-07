@@ -2,6 +2,12 @@
 
 Docker compose for notification bot.
 
+## Required local files
+
+- `notification/appsettings-local.json`
+- `dispatcher/appsettings-local.json`
+- `proxy/credentials.json` (copy from `proxy/credentials.example.json`)
+
 ## Update flow
 
 Run the `update` script to pull the repo and redeploy containers.
