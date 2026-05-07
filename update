@@ -69,6 +69,14 @@ fi
 info "Ensuring dispatcher certificate exists"
 mkdir -p "$CERT_DIR" || die "Failed to create $CERT_DIR"
 
+if [ -d "$CERT_FILE" ]; then
+    if [ -z "$(ls -A "$CERT_FILE" 2>/dev/null)" ]; then
+        rmdir "$CERT_FILE" || die "Failed to remove empty directory at $CERT_FILE"
+    else
+        die "$CERT_FILE exists as a non-empty directory; remove or rename it, then rerun update"
+    fi
+fi
+
 if [ ! -f "$CERT_FILE" ]; then
     TMP_KEY="$CERT_DIR/dispatcher.key"
     TMP_CRT="$CERT_DIR/dispatcher.crt"
