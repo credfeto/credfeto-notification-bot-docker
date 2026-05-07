@@ -1,38 +1,72 @@
-#! /bin/sh
+#!/bin/sh
 
 die() {
-    echo
-    echo "$@"
+    printf '\nERROR: %s\n' "$*" >&2
     exit 1
 }
 
+success() {
+    printf '\nOK: %s\n' "$*"
+}
+
+info() {
+    printf '\nINFO: %s\n' "$*"
+}
+
+allow_ipv4() {
+    address="$1"
+    port="$2"
+
+    sudo firewall-cmd --permanent --add-rich-rule="rule family=\"ipv4\" source address=\"${address}\" port port=\"${port}\" protocol=\"tcp\" accept" || die "Failed to add IPv4 firewall rule for ${address}:${port}"
+}
+
+allow_ipv6() {
+    address="$1"
+    port="$2"
+
+    sudo firewall-cmd --permanent --add-rich-rule="rule family=\"ipv6\" source address=\"${address}\" port port=\"${port}\" protocol=\"tcp\" accept" || die "Failed to add IPv6 firewall rule for ${address}:${port}"
+}
+
+open_port_for_private_networks() {
+    port="$1"
+
+    allow_ipv4 "10.0.0.0/8" "${port}"
+    allow_ipv4 "172.16.0.0/12" "${port}"
+    allow_ipv4 "192.168.0.0/16" "${port}"
+    allow_ipv6 "fc00::/7" "${port}"
+    allow_ipv6 "fe80::/10" "${port}"
+}
+
 BASEDIR="$(dirname "$(readlink -f "$0")")"
-echo "Script Dir: $BASEDIR"
+info "Script dir: $BASEDIR"
 
 cd "$BASEDIR" || die "Could not change to $BASEDIR"
 
-echo "Updating Repo"
-git pull
+info "Updating repo"
+git pull --ff-only || die "Failed to pull latest changes"
 
 [ -f "$BASEDIR/notification/appsettings-local.json" ] || die "Missing notification/appsettings-local.json"
 [ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
 [ -f "$BASEDIR/.env" ] || die "Missing .env file"
 [ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
 command -v openssl >/dev/null 2>&1 || die "openssl is required"
-chmod 644 "$BASEDIR/proxy/credentials.json"
+chmod 644 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
 
 CERT_DIR="$BASEDIR/certs"
 CERT_FILE="$CERT_DIR/dispatcher.pfx"
 
-echo "Ensuring dispatcher-data volume folder exists"
-sudo mkdir -p /data/dispatcher
-sudo docker volume create --driver local \
-    --opt type=none \
-    --opt o=bind \
-    --opt device=/data/dispatcher \
-    dispatcher-data 2>/dev/null || true
+info "Ensuring dispatcher-data volume folder exists"
+sudo mkdir -p /data/dispatcher || die "Failed to create /data/dispatcher"
 
-echo "Ensuring dispatcher certificate exists"
+if ! sudo docker volume inspect dispatcher-data >/dev/null 2>&1; then
+    sudo docker volume create --driver local \
+        --opt type=none \
+        --opt o=bind \
+        --opt device=/data/dispatcher \
+        dispatcher-data >/dev/null || die "Failed to create dispatcher-data docker volume"
+fi
+
+info "Ensuring dispatcher certificate exists"
 mkdir -p "$CERT_DIR" || die "Failed to create $CERT_DIR"
 
 if [ ! -f "$CERT_FILE" ]; then
@@ -51,21 +85,16 @@ if [ ! -f "$CERT_FILE" ]; then
         -in "$TMP_CRT" \
         -passout pass: || die "Failed to generate $CERT_FILE"
 
-    rm -f "$TMP_KEY" "$TMP_CRT"
-    chmod 600 "$CERT_FILE"
+    rm -f "$TMP_KEY" "$TMP_CRT" || die "Failed to remove temporary certificate files"
+    chmod 600 "$CERT_FILE" || die "Failed to set permissions on $CERT_FILE"
 fi
 
-echo "Configuring firewall rules for TCP port 3000 (private networks only)"
-# IPv4 private ranges
-sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="10.0.0.0/8" port port="3000" protocol="tcp" accept'
-sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="172.16.0.0/12" port port="3000" protocol="tcp" accept'
-sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="192.168.0.0/16" port port="3000" protocol="tcp" accept'
-# IPv6 private ranges (ULA fc00::/7 and link-local fe80::/10)
-sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv6" source address="fc00::/7" port port="3000" protocol="tcp" accept'
-sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv6" source address="fe80::/10" port port="3000" protocol="tcp" accept'
-sudo firewall-cmd --reload
+info "Configuring firewall rules for TCP port 3000 (private networks only)"
+open_port_for_private_networks "3000"
+sudo firewall-cmd --reload || die "Failed to reload firewall"
 
-echo "Updating docker"
-sudo docker compose pull && sudo docker compose up -d
+info "Updating docker"
+sudo docker compose pull || die "Failed to pull docker images"
+sudo docker compose up -d || die "Failed to start docker compose services"
 
-echo "Done"
+success "Update complete"

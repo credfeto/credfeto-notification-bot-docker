@@ -1,31 +1,40 @@
-#! /bin/sh
+#!/bin/sh
 
 die() {
-    echo
-    echo "$@"
+    printf '\nERROR: %s\n' "$*" >&2
     exit 1
 }
 
-BASEDIR="$(dirname "$(readlink -f "$0")")"
-echo "Script Dir: $BASEDIR"
+success() {
+    printf '\nOK: %s\n' "$*"
+}
 
-[ -f "$BASEDIR/appsettings-local.json" ] || die "Missing appsettings-local.json"
+info() {
+    printf '\nINFO: %s\n' "$*"
+}
+
+BASEDIR="$(dirname "$(readlink -f "$0")")"
+info "Script dir: $BASEDIR"
+
+cd "$BASEDIR" || die "Could not change to $BASEDIR"
+
+[ -f "$BASEDIR/notification/appsettings-local.json" ] || die "Missing notification/appsettings-local.json"
+[ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
 
 [ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
-chmod 644 "$BASEDIR/proxy/credentials.json"
+chmod 644 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
 
-echo "Updating systemd scripts"
-sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.service" /etc/systemd/system/credfeto-notification-bot.service
-sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.timer" /etc/systemd/system/credfeto-notification-bot.timer
+info "Updating systemd scripts"
+sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.service" /etc/systemd/system/credfeto-notification-bot.service || die "Failed to install service unit"
+sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.timer" /etc/systemd/system/credfeto-notification-bot.timer || die "Failed to install timer unit"
 
+info "Reloading systemd"
+sudo systemctl daemon-reload || die "Failed to reload systemd"
 
-echo "systemd reload"
-sudo systemctl daemon-reload
+info "Enabling credfeto-notification-bot.timer"
+sudo systemctl enable credfeto-notification-bot.timer || die "Failed to enable timer"
 
-echo "Enable credfeto-notification-bot.timer"
-sudo systemctl enable credfeto-notification-bot.timer
+info "Starting credfeto-notification-bot.timer"
+sudo systemctl start credfeto-notification-bot.timer || die "Failed to start timer"
 
-echo "Start credfeto-notification-bot.timer"
-sudo systemctl start credfeto-notification-bot.timer
-
-echo "Done"
+success "Install complete"
