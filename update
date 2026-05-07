@@ -18,7 +18,11 @@ git pull
 [ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
 [ -f "$BASEDIR/.env" ] || die "Missing .env file"
 [ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
+command -v openssl >/dev/null 2>&1 || die "openssl is required"
 chmod 644 "$BASEDIR/proxy/credentials.json"
+
+CERT_DIR="$BASEDIR/certs"
+CERT_FILE="$CERT_DIR/dispatcher.pfx"
 
 echo "Ensuring dispatcher-data volume folder exists"
 sudo mkdir -p /data/dispatcher
@@ -27,6 +31,29 @@ sudo docker volume create --driver local \
     --opt o=bind \
     --opt device=/data/dispatcher \
     dispatcher-data 2>/dev/null || true
+
+echo "Ensuring dispatcher certificate exists"
+mkdir -p "$CERT_DIR" || die "Failed to create $CERT_DIR"
+
+if [ ! -f "$CERT_FILE" ]; then
+    TMP_KEY="$CERT_DIR/dispatcher.key"
+    TMP_CRT="$CERT_DIR/dispatcher.crt"
+
+    openssl req -x509 -nodes -newkey rsa:4096 \
+        -keyout "$TMP_KEY" \
+        -out "$TMP_CRT" \
+        -days 3650 \
+        -subj "/CN=dispatcher-bot" || die "Failed to generate self-signed certificate"
+
+    openssl pkcs12 -export \
+        -out "$CERT_FILE" \
+        -inkey "$TMP_KEY" \
+        -in "$TMP_CRT" \
+        -passout pass: || die "Failed to generate $CERT_FILE"
+
+    rm -f "$TMP_KEY" "$TMP_CRT"
+    chmod 600 "$CERT_FILE"
+fi
 
 echo "Configuring firewall rules for TCP port 3000 (private networks only)"
 # IPv4 private ranges
