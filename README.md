@@ -2,6 +2,20 @@
 
 Docker compose for notification bot.
 
+## Documentation
+
+- Additional notes live in `docs/`.
+
+## Operations
+
+Use these scripts from the repository root:
+
+```bash
+./install
+./update
+./reset
+```
+
 ## Required local files
 
 - `notification/appsettings-local.json`
