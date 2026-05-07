@@ -32,7 +32,7 @@ services:
     volumes:
       - ./dispatcher/appsettings-local.json:/usr/src/app/appsettings-local.json:r
       - dispatcher-data:/usr/src/app/data
-      - ./certs/dispatcher.pfx:/usr/src/apps/server.pfx:ro
+      - ./certs/dispatcher.pfx:/usr/src/app/server.pfx:ro
 
   github-api-proxy:
     container_name: github-api-proxy
