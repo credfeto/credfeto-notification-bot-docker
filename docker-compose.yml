@@ -31,7 +31,6 @@ services:
       - "8081:8081"
     volumes:
       - ./dispatcher/appsettings-local.json:/usr/src/app/appsettings-local.json:r
-      - dispatcher-data:/usr/src/app/data
       - ./certs/dispatcher.pfx:/usr/src/app/server.pfx:ro
 
   github-api-proxy:
