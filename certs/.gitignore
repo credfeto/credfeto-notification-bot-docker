@@ -1,4 +1,3 @@
 # Ignore generated certificate files
 *
 !.gitignore
-

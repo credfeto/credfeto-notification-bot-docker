@@ -10,4 +10,3 @@ CPUSchedulingPolicy=idle
 
 WorkingDirectory=/root/work/personal/credfeto-notification-bot-docker
 ExecStart=/root/work/personal/credfeto-notification-bot-docker/update
-
