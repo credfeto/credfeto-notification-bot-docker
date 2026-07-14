@@ -19,8 +19,15 @@ compose` run by a dedicated unprivileged system user, `notification-bot`.
   a D-Bus session bus at `/run/user/<uid>/bus`, and that bus only exists if
   systemd-logind has started that user's manager — lingering makes it start
   at boot without a login, independent of the container-runner unit itself
-  staying a plain system unit. `Environment=XDG_RUNTIME_DIR=/run/user/%U`
-  points podman at it. An earlier version of this unit used a bespoke
+  staying a plain system unit. `run-compose` itself computes and exports
+  `XDG_RUNTIME_DIR=/run/user/$(id -u)` before calling podman, rather than
+  the unit setting `Environment=XDG_RUNTIME_DIR=/run/user/%U` — on the real
+  host, `%U` resolved to the *service manager's* UID (0), not
+  `User=notification-bot`'s, pointing podman at `/run/user/0` and failing
+  with `Failed to obtain podman configuration: lstat /run/user/0: no such
+  file or directory`; `id -u` inside the already-`User=`-scoped process is
+  reliable regardless of that specifier's behaviour on a given systemd
+  version. An even earlier version of this unit used a bespoke
   `RuntimeDirectory=notification-bot` (`/run/notification-bot`) instead —
   that has no bus socket behind it and failed on the real host with
   `netavark: ... aardvark-dns failed to start` /
@@ -79,16 +86,36 @@ compose` run by a dedicated unprivileged system user, `notification-bot`.
   Fixed by having `install` run `loginctl enable-linger notification-bot`
   (starts that user's manager, and its bus, at boot with no login required)
   and pointing `XDG_RUNTIME_DIR` at the real `/run/user/<uid>` it manages,
-  in both the systemd unit (`/run/user/%U`) and the `runuser` calls in
-  `install`/`reset` (`/run/user/$(id -u notification-bot)`) — replacing the
-  bespoke `RuntimeDirectory=notification-bot` from the first version of
-  this unit, which had no bus socket behind it. Also had to drop
+  replacing the bespoke `RuntimeDirectory=notification-bot` from the first
+  version of this unit, which had no bus socket behind it. Also had to drop
   `ProtectHome=yes` from the unit, since it independently masks
-  `/run/user/*` too. **This fix has not yet been re-run on the real host**
-  — the first `install` attempt is what surfaced the original problem;
-  confirm the retry actually gets all three containers running
-  (`podman compose ps` as `notification-bot`, or `systemctl status
-  credfeto-notification-bot.service` for a clean "active").
+  `/run/user/*` too.
+- **[RESOLVED, found on the real host] The systemd unit's
+  `Environment=XDG_RUNTIME_DIR=/run/user/%U` resolved to the wrong UID.**
+  After the linger fix above, the unit still failed:
+  `Failed to obtain podman configuration: lstat /run/user/0: no such file or
+  directory` — `%U` expanded to `0` (the service manager's UID), not
+  `notification-bot`'s. Fixed by dropping the `Environment=` line entirely
+  and having `run-compose` compute `XDG_RUNTIME_DIR=/run/user/$(id -u)`
+  itself at runtime, which is correct regardless of that specifier's
+  behaviour on a given systemd version. `install`/`reset`'s own `runuser`
+  calls were never affected — they already computed the UID via
+  `id -u notification-bot` in shell, not via a systemd specifier.
+- **[RESOLVED, found on the real host] A pre-migration
+  `credfeto-notification-bot.timer` kept firing against the new
+  `credfeto-notification-bot.service`.** The old design had a timer/service
+  pair of that same name doing a completely different job (the root-run
+  update). Systemd timers default to targeting the identically-named
+  `.service` when no `Unit=` override is given, so upgrading in place left
+  the old timer firing the new container-runner service every 5 minutes.
+  `install` now detects and removes `/etc/systemd/system/credfeto-notification-bot.timer`
+  if present, before installing the new units.
+- **All three of the above were only found by running `install` on the
+  real host and reading `journalctl -xeu credfeto-notification-bot.service`
+  after each attempt** — confirm a fresh `install` run now gets all three
+  containers running (`podman compose ps` as `notification-bot`, or
+  `systemctl status credfeto-notification-bot.service` for a clean
+  "active").
 - **`systemctl restart credfeto-notification-bot.service` may still kill
   the containers — still unverified.** Rootless podman is daemonless:
   `conmon`/container processes normally live inside the launching unit's

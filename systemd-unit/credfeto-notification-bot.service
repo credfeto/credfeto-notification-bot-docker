@@ -17,10 +17,11 @@ Group=notification-bot
 WorkingDirectory=/opt/credfeto-notification-bot-docker
 # Rootless podman's network backend (pasta/netavark) needs a D-Bus session
 # bus to register with systemd --user; that bus only exists at
-# /run/user/%U, provisioned by `loginctl enable-linger notification-bot`
+# /run/user/<uid>, provisioned by `loginctl enable-linger notification-bot`
 # (see install). A bespoke RuntimeDirectory= here does not have a bus
-# socket behind it and networking fails outright.
-Environment=XDG_RUNTIME_DIR=/run/user/%U
+# socket behind it and networking fails outright. XDG_RUNTIME_DIR is set by
+# run-compose itself, computed from the actual running UID - the %U
+# specifier is not reliably this unit's User= UID on every systemd version.
 ExecStart=/opt/credfeto-notification-bot-docker/run-compose
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle

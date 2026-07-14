@@ -29,6 +29,14 @@ BASEDIR="$(dirname "$(readlink -f "$0")")"
 
 cd "$BASEDIR" || die "Could not change to ${BASEDIR}"
 
+# The systemd unit's own XDG_RUNTIME_DIR=/run/user/%U is unreliable - on at
+# least one real host %U resolved to the service manager's UID (0) rather
+# than notification-bot's, pointing podman at the wrong (root-owned)
+# runtime dir. Compute it from the actual running user instead, which is
+# always correct regardless of specifier support/behaviour.
+: "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+export XDG_RUNTIME_DIR
+
 command -v podman >/dev/null 2>&1 || die "podman is required"
 podman compose version || die "podman compose is required"
 
