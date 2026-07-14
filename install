@@ -89,6 +89,18 @@ fi
 SERVICE_UID="$(id -u "$SERVICE_USER")" || die "Failed to resolve UID for ${SERVICE_USER}"
 SERVICE_RUNTIME_DIR="/run/user/${SERVICE_UID}"
 
+# With lingering enabled, podman defaults to --cgroup-manager=systemd and
+# asks notification-bot's own systemd --user instance (over its D-Bus
+# session bus) to create a transient scope unit per container. That request
+# comes from credfeto-notification-bot.service, a *system* unit reaching
+# into that user session from outside it, and is rejected with "Permission
+# denied: OCI permission denied" rather than actually managing cgroups.
+# cgroupfs sidesteps needing that cross-boundary request entirely.
+info "Configuring podman to use the cgroupfs cgroup manager for ${SERVICE_USER}"
+sudo install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "${SERVICE_HOME}/.config/containers" || die "Failed to create ${SERVICE_HOME}/.config/containers"
+printf '[engine]\ncgroup_manager = "cgroupfs"\n' | sudo tee "${SERVICE_HOME}/.config/containers/containers.conf" >/dev/null || die "Failed to write containers.conf for ${SERVICE_USER}"
+sudo chown "${SERVICE_USER}:${SERVICE_GROUP}" "${SERVICE_HOME}/.config/containers/containers.conf" || die "Failed to set ownership on containers.conf"
+
 # loginctl enable-linger starts the user manager (and its D-Bus session bus)
 # immediately, but poll briefly in case that hasn't landed yet.
 info "Waiting for ${SERVICE_RUNTIME_DIR}"

@@ -101,6 +101,22 @@ compose` run by a dedicated unprivileged system user, `notification-bot`.
   behaviour on a given systemd version. `install`/`reset`'s own `runuser`
   calls were never affected — they already computed the UID via
   `id -u notification-bot` in shell, not via a systemd specifier.
+- **[RESOLVED, found on the real host] Containers failed to start with
+  `Permission denied: OCI permission denied` creating a
+  `libpod-<id>.scope`.** After the two fixes above, images pulled and
+  containers were *created*, but `podman compose up -d` failed for all
+  three with `runc create failed: ... unable to start unit
+  "libpod-<id>.scope" ... Permission denied: OCI permission denied`. With
+  lingering enabled, podman defaults to `--cgroup-manager=systemd` and asks
+  `notification-bot`'s own `systemd --user` instance (over its D-Bus
+  session bus) to create a transient scope unit per container — but that
+  request comes from `credfeto-notification-bot.service`, a *system* unit
+  reaching into that user session from outside it, and gets rejected.
+  Fixed by having `install` write `cgroup_manager = "cgroupfs"` to
+  `~notification-bot/.config/containers/containers.conf`, so podman never
+  needs to talk to the user session's systemd for cgroups at all — trading
+  away per-container `systemd-cgtop`/`systemctl` visibility for reliability
+  in this specific system-unit-without-a-real-login-session topology.
 - **[RESOLVED, found on the real host] A pre-migration
   `credfeto-notification-bot.timer` kept firing against the new
   `credfeto-notification-bot.service`.** The old design had a timer/service
