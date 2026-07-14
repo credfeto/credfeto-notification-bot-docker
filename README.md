@@ -14,7 +14,9 @@ unprivileged rootless systemd service.
   unprivileged `notification-bot` user via rootless podman. It has no
   standing privileges beyond read access to this checkout and write access
   to the `dispatcher-data` volume's backing directory. Its `ExecStart` is
-  the `run-compose` script (`podman compose pull && podman compose up -d`).
+  the `run-compose` script (`podman compose pull && podman compose up -d`,
+  then `podman image prune -f` to reclaim disk space from the previous
+  `:latest` image each pull leaves dangling).
 - `credfeto-notification-bot-update.timer` fires every 5 minutes and runs
   the root-run `update` script, which pulls this repo, validates/refreshes
   local config, and always restarts `credfeto-notification-bot.service`
@@ -27,7 +29,7 @@ unprivileged rootless systemd service.
 - `install` performs one-time, root-only setup: creates the `notification-bot`
   system user with a subuid/subgid range, grants it read access to this
   checkout and ownership of the data directory, registers the external
-  `dispatcher-data` podman volume, opens the required firewall port, and
+  `dispatcher-data` podman volume, opens the required firewall ports, and
   installs/enables the systemd units.
 - `reset` tears down the running containers and re-runs `install`.
 
