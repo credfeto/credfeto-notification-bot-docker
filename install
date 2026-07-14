@@ -136,6 +136,17 @@ info "Configuring firewall rules for TCP port 3000 (private networks only)"
 open_port_for_private_networks "3000"
 sudo firewall-cmd --reload || die "Failed to reload firewall"
 
+# Pre-migration hosts have a credfeto-notification-bot.timer that triggers
+# credfeto-notification-bot.service by default same-basename matching (no
+# Unit= override) - that .service is now this repo's container runner, not
+# the old root-run update job, so leaving the old timer in place makes it
+# fire against the new unit on its old 5-minute schedule.
+if [ -f /etc/systemd/system/credfeto-notification-bot.timer ]; then
+    info "Removing stale pre-migration credfeto-notification-bot.timer"
+    sudo systemctl disable --now credfeto-notification-bot.timer || die "Failed to disable stale credfeto-notification-bot.timer"
+    sudo rm -f /etc/systemd/system/credfeto-notification-bot.timer || die "Failed to remove stale credfeto-notification-bot.timer"
+fi
+
 info "Installing systemd units"
 sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.service" /etc/systemd/system/credfeto-notification-bot.service || die "Failed to install service unit"
 sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot-update.service" /etc/systemd/system/credfeto-notification-bot-update.service || die "Failed to install update service unit"
