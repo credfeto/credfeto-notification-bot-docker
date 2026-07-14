@@ -102,13 +102,21 @@ printf '[engine]\ncgroup_manager = "cgroupfs"\n' | sudo tee "${SERVICE_HOME}/.co
 sudo chown "${SERVICE_USER}:${SERVICE_GROUP}" "${SERVICE_HOME}/.config/containers/containers.conf" || die "Failed to set ownership on containers.conf"
 
 # loginctl enable-linger starts the user manager (and its D-Bus session bus)
-# immediately, but poll briefly in case that hasn't landed yet.
+# immediately, but poll briefly in case that hasn't landed yet. If it still
+# hasn't after 10s, nudge it directly - then keep polling for the bus
+# socket rather than assuming that start succeeded synchronously, so a
+# still-missing bus fails loudly here instead of surfacing later as a
+# confusing "failed to create podman volume" error.
 info "Waiting for ${SERVICE_RUNTIME_DIR}"
 _WAITED=0
+_NUDGED=0
 while [ ! -S "${SERVICE_RUNTIME_DIR}/bus" ]; do
-    if [ "$_WAITED" -ge 10 ]; then
+    if [ "$_WAITED" -ge 20 ]; then
+        die "Timed out waiting for ${SERVICE_RUNTIME_DIR}/bus to appear"
+    fi
+    if [ "$_WAITED" -ge 10 ] && [ "$_NUDGED" -eq 0 ]; then
         sudo systemctl start "user@${SERVICE_UID}.service" || die "Failed to start user@${SERVICE_UID}.service"
-        break
+        _NUDGED=1
     fi
     sleep 1
     _WAITED=$((_WAITED + 1))

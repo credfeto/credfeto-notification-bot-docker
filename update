@@ -25,6 +25,30 @@ info() {
     fi
 }
 
+allow_ipv4() {
+    address="$1"
+    port="$2"
+
+    firewall-cmd --permanent --add-rich-rule="rule family=\"ipv4\" source address=\"${address}\" port port=\"${port}\" protocol=\"tcp\" accept" || die "Failed to add IPv4 firewall rule for ${address}:${port}"
+}
+
+allow_ipv6() {
+    address="$1"
+    port="$2"
+
+    firewall-cmd --permanent --add-rich-rule="rule family=\"ipv6\" source address=\"${address}\" port port=\"${port}\" protocol=\"tcp\" accept" || die "Failed to add IPv6 firewall rule for ${address}:${port}"
+}
+
+open_port_for_private_networks() {
+    port="$1"
+
+    allow_ipv4 "10.0.0.0/8" "${port}"
+    allow_ipv4 "172.16.0.0/12" "${port}"
+    allow_ipv4 "192.168.0.0/16" "${port}"
+    allow_ipv6 "fc00::/7" "${port}"
+    allow_ipv6 "fe80::/10" "${port}"
+}
+
 # /opt/credfeto-notification-bot-docker is root-owned; re-exec as root once up
 # front rather than sprinkling sudo through every command below.
 if [ "$(id -u)" -ne 0 ]; then
@@ -32,6 +56,9 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 SERVICE_USER="notification-bot"
+SERVICE_GROUP="notification-bot"
+SERVICE_HOME="/var/lib/notification-bot"
+DISPATCHER_DATA_DIR="/data/dispatcher"
 SERVICE_UNIT="credfeto-notification-bot.service"
 STATE_FILE=".state/update-state"
 
@@ -92,8 +119,46 @@ if [ ! -f "$CERT_FILE" ]; then
 
     rm -f "$TMP_KEY" "$TMP_CRT" || die "Failed to remove temporary certificate files"
     chgrp "$SERVICE_USER" "$CERT_FILE" || die "Failed to set group ownership on $CERT_FILE"
+    # Unlike proxy/credentials.json, this has NOT been confirmed to need
+    # 644 - dispatcher-bot currently reads it fine at 640. But that's only
+    # because of whatever UID dispatcher-bot's containerized process
+    # happens to map to today; it is not proof the general rootless-podman
+    # UID-mapping problem (documented in docs/README.md, and the reason
+    # credentials.json needed 644) doesn't apply here too. If dispatcher-bot
+    # ever starts crash-looping with no logged output after an image
+    # update, check this first before anything else.
     chmod 640 "$CERT_FILE" || die "Failed to set permissions on $CERT_FILE"
 fi
+
+SERVICE_UID="$(id -u "$SERVICE_USER")" || die "Failed to resolve UID for ${SERVICE_USER}"
+SERVICE_RUNTIME_DIR="/run/user/${SERVICE_UID}"
+
+# Self-heal the external podman volume: if it's ever lost after install
+# (podman volume prune/rm, disk/host rebuild, etc.), the next
+# `podman compose up -d` in run-compose fails outright since compose
+# validates declared external volumes at up-time, taking down all three
+# containers with no automatic recovery otherwise.
+info "Ensuring ${DISPATCHER_DATA_DIR} and its podman volume exist"
+mkdir -p "$DISPATCHER_DATA_DIR" || die "Failed to create ${DISPATCHER_DATA_DIR}"
+chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "$DISPATCHER_DATA_DIR" || die "Failed to set ownership on ${DISPATCHER_DATA_DIR}"
+if ! runuser -u "$SERVICE_USER" -- env "HOME=${SERVICE_HOME}" "XDG_RUNTIME_DIR=${SERVICE_RUNTIME_DIR}" podman volume inspect dispatcher-data >/dev/null 2>&1; then
+    runuser -u "$SERVICE_USER" -- env "HOME=${SERVICE_HOME}" "XDG_RUNTIME_DIR=${SERVICE_RUNTIME_DIR}" podman volume create \
+        --opt type=none \
+        --opt o=bind \
+        --opt device="$DISPATCHER_DATA_DIR" \
+        dispatcher-data >/dev/null || die "Failed to create dispatcher-data podman volume"
+fi
+
+# Self-heal the firewall rules: if they're ever lost outside this repo's
+# control (firewalld reset/reinstall, an admin removing a rule, a zone
+# collision like the docker zone documented in docs/README.md),
+# dispatcher-bot/github-api-proxy become unreachable from the private
+# network until someone notices and re-runs ./install by hand otherwise.
+info "Ensuring firewall rules for TCP ports 3000, 8080, 8081 (private networks only)"
+open_port_for_private_networks "3000"
+open_port_for_private_networks "8080"
+open_port_for_private_networks "8081"
+firewall-cmd --reload || die "Failed to reload firewall"
 
 CONFIG_HASH="$(sha256sum "$BASEDIR/notification/appsettings-local.json" "$BASEDIR/dispatcher/appsettings-local.json" "$BASEDIR/proxy/credentials.json" "$BASEDIR/.env" "$CERT_FILE" | sha256sum | awk '{print $1}')" || die "Failed to hash config files"
 
@@ -104,16 +169,25 @@ if [ -f "$STATE_FILE" ]; then
     OLD_CONFIG_HASH="$(sed -n '2p' "$STATE_FILE")"
 fi
 
-# Every podman invocation from this script goes through
-# credfeto-notification-bot.service (KillMode=none), never a direct
-# `runuser ... podman` call here: this oneshot job's own cgroup is reaped
-# by systemd the moment it exits, which would take any directly-spawned
-# container processes down with it.
+# Every container-starting podman invocation from this script goes through
+# credfeto-notification-bot.service (KillMode=none) rather than a direct
+# `podman compose up`/pull here: this oneshot job's own cgroup is reaped by
+# systemd the moment it exits, which would take any directly-spawned
+# *container* processes down with it. (The runuser podman volume calls
+# above are one-shot metadata operations that exit immediately and leave
+# nothing running, so that concern doesn't apply to them.)
+#
+# The restart below is UNCONDITIONAL - it always runs, on every tick,
+# regardless of the branch below. That branch only picks the log message;
+# do NOT move the restart inside it. Restarting is safe even with no
+# git/config change (run-compose's `podman compose up -d` is idempotent,
+# recreating only containers whose image/config actually changed), and is
+# what picks up a bare `:latest` image push with no repo change at all.
+CHANGE_REASON="no git or config change - refreshing images"
 if [ "$NEW_HEAD" != "$OLD_HEAD" ] || [ "$CONFIG_HASH" != "$OLD_CONFIG_HASH" ]; then
-    info "Git or config changes detected - restarting ${SERVICE_UNIT}"
-else
-    info "No git or config changes - refreshing images"
+    CHANGE_REASON="git or config change detected"
 fi
+info "Restarting ${SERVICE_UNIT} (${CHANGE_REASON})"
 systemctl restart "$SERVICE_UNIT" || die "Failed to restart ${SERVICE_UNIT}"
 
 mkdir -p "$BASEDIR/.state" || die "Failed to create $BASEDIR/.state"

@@ -56,11 +56,17 @@ compose` run by a dedicated unprivileged system user, `notification-bot`.
   safe to re-run. It also drops to `notification-bot` (via `runuser`) for
   the one-off `podman volume create`/`inspect` calls.
 - `update` self-elevates via `sudo` if not already root, then does all its
-  work as root (git pull, cert generation, config permissions). It never
-  invokes podman itself — it always ends by restarting
-  `credfeto-notification-bot.service`, which is the only place podman
-  actually runs (a timer-triggered oneshot job's own cgroup is reaped by
-  systemd on exit, which would kill anything it spawned directly).
+  work as root (git pull, cert generation, config permissions), including
+  self-healing the `dispatcher-data` podman volume and the firewall rules
+  on every tick in case either is ever lost outside this repo's control.
+  Those `podman volume`/`firewall-cmd` calls are one-shot metadata
+  operations that exit immediately and leave nothing running, so they're
+  safe to run directly here. It never starts *containers* directly, though
+  — it always ends by restarting `credfeto-notification-bot.service`
+  unconditionally, which is the only place `podman compose up`/`pull` runs
+  (a timer-triggered oneshot job's own cgroup is reaped by systemd on exit,
+  which would kill any long-running container process it spawned
+  directly).
 - `reset` self-elevates the same way, and drops to `notification-bot` (via
   `runuser`) to explicitly stop/remove (`podman compose down`) and prune
   containers — that's fine because it's run interactively, not spawned by
@@ -197,3 +203,19 @@ internal UID.
   5-minute tick — `podman compose up -d` only recreates containers whose
   image actually changed — rather than a container polling the
   docker/podman socket every 60s.
+- **`dispatcher.pfx` is still `640`, not `644`.** Unlike
+  `proxy/credentials.json`, `certs/dispatcher.pfx` has *not* been confirmed
+  to need `other`-read — `dispatcher-bot` currently reads it fine at `640`.
+  That's not proof the same rootless-podman UID-mapping problem doesn't
+  apply to it too, only that whatever UID its containerized process maps
+  to today happens to have access. Left as-is rather than pre-emptively
+  widening a TLS private key's permissions without evidence it's actually
+  needed — if `dispatcher-bot` ever starts crash-looping with no logged
+  output after an image update, check this first (see `update`'s comment
+  at the `chmod 640 "$CERT_FILE"` line).
+- **`update` self-heals the `dispatcher-data` volume and firewall rules on
+  every tick**, not just once at `install` time — an earlier version of
+  this PR moved that logic into `install` only, which meant either being
+  lost outside this repo's control (volume pruned, firewalld reset) would
+  cause a silent, unrecovered outage instead of self-healing within 5
+  minutes the way the pre-migration script did. Restored in `update`.
