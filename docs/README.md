@@ -135,6 +135,18 @@ podman-compose version (1.6.0) doesn't support (`invalid choice: 'rm'`,
 no such subcommand) — fixed to use `podman compose down` instead, which
 covers stop+remove in one step and is actually supported.
 
+Also found once the deployment itself was confirmed working: an external
+reverse proxy (Traefik, on a different host on the LAN) started getting
+502s reaching `dispatcher-bot` on 8080/8081 — those ports had never been
+opened in firewalld, only 3000 (`github-api-proxy`) had. This had gone
+unnoticed under docker because **docker manipulates iptables directly for
+published ports, which commonly bypasses firewalld's zone filtering
+entirely** — rootless podman's `pasta` doesn't do that same bypass, so
+ports that "just worked" under docker are subject to normal firewalld
+rules under podman. `install` now opens 3000, 8080, and 8081 for private
+networks (matching every port `docker-compose.yml` actually publishes),
+not just 3000.
+
 ### Remaining caveats
 
 - **Subuid/subgid range.** `install` allocates `200000-265535` to

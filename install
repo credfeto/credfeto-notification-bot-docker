@@ -144,8 +144,15 @@ if ! sudo runuser -u "$SERVICE_USER" -- env "HOME=${SERVICE_HOME}" "XDG_RUNTIME_
         dispatcher-data >/dev/null || die "Failed to create dispatcher-data podman volume"
 fi
 
-info "Configuring firewall rules for TCP port 3000 (private networks only)"
+# docker manipulates iptables directly for published ports, which often
+# bypasses firewalld's zone filtering entirely - rootless podman's pasta
+# does not do that same bypass, so ports that "just worked" under docker
+# are subject to normal firewalld rules under podman. dispatcher-bot
+# publishes 8080/8081 in addition to github-api-proxy's 3000.
+info "Configuring firewall rules for TCP ports 3000, 8080, 8081 (private networks only)"
 open_port_for_private_networks "3000"
+open_port_for_private_networks "8080"
+open_port_for_private_networks "8081"
 sudo firewall-cmd --reload || die "Failed to reload firewall"
 
 # Pre-migration hosts have a credfeto-notification-bot.timer that triggers
