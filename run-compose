@@ -51,8 +51,9 @@ podman compose up -d --remove-orphans || die "Failed to start containers"
 # else reclaims that disk space, and this runs on every update tick, so
 # prune here - image prune only removes images no container references,
 # and by this point any container using the old image has already been
-# recreated above.
+# recreated above. Best-effort: containers are already up, so a prune
+# failure (empty store, transient lock, etc.) must never fail the run.
 info "Pruning dangling images"
-podman image prune -f || die "Failed to prune dangling images"
+podman image prune --force || true
 
 success "Containers up to date"
