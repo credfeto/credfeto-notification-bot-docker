@@ -1,30 +1,56 @@
 #!/bin/sh
 
 die() {
-    printf '\n\033[31m✗\033[0m %s\n' "$*" >&2
+    if [ -t 2 ]; then
+        printf '\n\033[31m✗\033[0m %s\n' "$*" >&2
+    else
+        printf '\n✗ %s\n' "$*" >&2
+    fi
     exit 1
 }
 
 success() {
-    printf '\n\033[32m✓\033[0m %s\n' "$*"
+    if [ -t 1 ]; then
+        printf '\n\033[32m✓\033[0m %s\n' "$*"
+    else
+        printf '\n✓ %s\n' "$*"
+    fi
 }
 
 info() {
-    printf '\n\033[32m→\033[0m %s\n' "$*"
+    if [ -t 1 ]; then
+        printf '\n\033[32m→\033[0m %s\n' "$*"
+    else
+        printf '\n→ %s\n' "$*"
+    fi
 }
+
+if [ "$(id -u)" -ne 0 ]; then
+    exec sudo "$0" "$@"
+fi
+
+SERVICE_USER="notification-bot"
+SERVICE_HOME="/var/lib/notification-bot"
+SERVICE_UNIT="credfeto-notification-bot.service"
 
 BASEDIR="$(dirname "$(readlink -f "$0")")"
 
 cd "$BASEDIR" || die "Could not change to ${BASEDIR}"
 
+command -v podman >/dev/null 2>&1 || die "podman is required"
+id "$SERVICE_USER" >/dev/null 2>&1 || die "${SERVICE_USER} user does not exist - run ./install first"
+
+info "Stopping systemd service"
+systemctl stop "$SERVICE_UNIT" || die "Failed to stop ${SERVICE_UNIT}"
+
 info "Stopping containers"
-sudo docker compose stop || die "Failed to stop containers"
+runuser -u "$SERVICE_USER" -- env "HOME=${SERVICE_HOME}" "XDG_RUNTIME_DIR=/run/${SERVICE_USER}" podman compose stop || die "Failed to stop containers"
 
 info "Removing containers"
-sudo docker compose rm -f || die "Failed to remove containers"
+runuser -u "$SERVICE_USER" -- env "HOME=${SERVICE_HOME}" "XDG_RUNTIME_DIR=/run/${SERVICE_USER}" podman compose rm -f || die "Failed to remove containers"
 
-info "Pruning Docker system"
-sudo docker system prune -f || die "Failed to prune Docker system"
+info "Pruning podman system"
+runuser -u "$SERVICE_USER" -- env "HOME=${SERVICE_HOME}" "XDG_RUNTIME_DIR=/run/${SERVICE_USER}" podman system prune -f || die "Failed to prune podman system"
 
 info "Running install"
 "${BASEDIR}/install" || die "Install failed"

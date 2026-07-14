@@ -1,40 +1,129 @@
 #!/bin/sh
 
 die() {
-    printf '\nERROR: %s\n' "$*" >&2
+    if [ -t 2 ]; then
+        printf '\n\033[31m✗\033[0m %s\n' "$*" >&2
+    else
+        printf '\n✗ %s\n' "$*" >&2
+    fi
     exit 1
 }
 
 success() {
-    printf '\nOK: %s\n' "$*"
+    if [ -t 1 ]; then
+        printf '\n\033[32m✓\033[0m %s\n' "$*"
+    else
+        printf '\n✓ %s\n' "$*"
+    fi
 }
 
 info() {
-    printf '\nINFO: %s\n' "$*"
+    if [ -t 1 ]; then
+        printf '\n\033[32m→\033[0m %s\n' "$*"
+    else
+        printf '\n→ %s\n' "$*"
+    fi
 }
+
+allow_ipv4() {
+    address="$1"
+    port="$2"
+
+    sudo firewall-cmd --permanent --add-rich-rule="rule family=\"ipv4\" source address=\"${address}\" port port=\"${port}\" protocol=\"tcp\" accept" || die "Failed to add IPv4 firewall rule for ${address}:${port}"
+}
+
+allow_ipv6() {
+    address="$1"
+    port="$2"
+
+    sudo firewall-cmd --permanent --add-rich-rule="rule family=\"ipv6\" source address=\"${address}\" port port=\"${port}\" protocol=\"tcp\" accept" || die "Failed to add IPv6 firewall rule for ${address}:${port}"
+}
+
+open_port_for_private_networks() {
+    port="$1"
+
+    allow_ipv4 "10.0.0.0/8" "${port}"
+    allow_ipv4 "172.16.0.0/12" "${port}"
+    allow_ipv4 "192.168.0.0/16" "${port}"
+    allow_ipv6 "fc00::/7" "${port}"
+    allow_ipv6 "fe80::/10" "${port}"
+}
+
+SERVICE_USER="notification-bot"
+SERVICE_GROUP="notification-bot"
+SERVICE_HOME="/var/lib/notification-bot"
+DISPATCHER_DATA_DIR="/data/dispatcher"
+EXPECTED_BASEDIR="/opt/credfeto-notification-bot-docker"
 
 BASEDIR="$(dirname "$(readlink -f "$0")")"
 info "Script dir: $BASEDIR"
 
 cd "$BASEDIR" || die "Could not change to $BASEDIR"
 
+[ "$BASEDIR" = "$EXPECTED_BASEDIR" ] || die "This checkout must live at ${EXPECTED_BASEDIR} (found ${BASEDIR}) - the systemd units hardcode that path"
+
 [ -f "$BASEDIR/notification/appsettings-local.json" ] || die "Missing notification/appsettings-local.json"
 [ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
 
-[ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
-chmod 644 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
+[ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 640"
 
-info "Updating systemd scripts"
+command -v podman >/dev/null 2>&1 || die "podman is required - install it before running this script"
+podman compose version >/dev/null 2>&1 || die "podman compose is required - install it before running this script"
+
+info "Creating unprivileged service user ${SERVICE_USER}"
+if ! id "$SERVICE_USER" >/dev/null 2>&1; then
+    sudo useradd --system --create-home --home-dir "$SERVICE_HOME" --shell /usr/sbin/nologin "$SERVICE_USER" || die "Failed to create ${SERVICE_USER} user"
+fi
+
+if ! grep -q "^${SERVICE_USER}:" /etc/subuid 2>/dev/null; then
+    info "Allocating subuid range for ${SERVICE_USER}"
+    sudo usermod --add-subuids 200000-265535 "$SERVICE_USER" || die "Failed to allocate subuid range for ${SERVICE_USER}"
+fi
+
+if ! grep -q "^${SERVICE_USER}:" /etc/subgid 2>/dev/null; then
+    info "Allocating subgid range for ${SERVICE_USER}"
+    sudo usermod --add-subgids 200000-265535 "$SERVICE_USER" || die "Failed to allocate subgid range for ${SERVICE_USER}"
+fi
+
+info "Granting ${SERVICE_GROUP} read access to ${BASEDIR}"
+sudo chgrp -R "$SERVICE_GROUP" "$BASEDIR" || die "Failed to set group ownership on ${BASEDIR}"
+sudo chmod -R g+rX "$BASEDIR" || die "Failed to grant group read access on ${BASEDIR}"
+
+sudo chgrp "$SERVICE_GROUP" "$BASEDIR/proxy/credentials.json" || die "Failed to set group on proxy/credentials.json"
+sudo chmod 640 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
+
+info "Preparing ${DISPATCHER_DATA_DIR}"
+sudo mkdir -p "$DISPATCHER_DATA_DIR" || die "Failed to create ${DISPATCHER_DATA_DIR}"
+sudo chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "$DISPATCHER_DATA_DIR" || die "Failed to set ownership on ${DISPATCHER_DATA_DIR}"
+
+info "Ensuring ${SERVICE_USER} runtime directory exists"
+sudo install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0700 "/run/${SERVICE_USER}" || die "Failed to create /run/${SERVICE_USER}"
+
+info "Registering dispatcher-data podman volume"
+if ! sudo runuser -u "$SERVICE_USER" -- env "HOME=${SERVICE_HOME}" "XDG_RUNTIME_DIR=/run/${SERVICE_USER}" podman volume inspect dispatcher-data >/dev/null 2>&1; then
+    sudo runuser -u "$SERVICE_USER" -- env "HOME=${SERVICE_HOME}" "XDG_RUNTIME_DIR=/run/${SERVICE_USER}" podman volume create \
+        --opt type=none \
+        --opt o=bind \
+        --opt device="$DISPATCHER_DATA_DIR" \
+        dispatcher-data >/dev/null || die "Failed to create dispatcher-data podman volume"
+fi
+
+info "Configuring firewall rules for TCP port 3000 (private networks only)"
+open_port_for_private_networks "3000"
+sudo firewall-cmd --reload || die "Failed to reload firewall"
+
+info "Installing systemd units"
 sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.service" /etc/systemd/system/credfeto-notification-bot.service || die "Failed to install service unit"
-sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.timer" /etc/systemd/system/credfeto-notification-bot.timer || die "Failed to install timer unit"
+sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot-update.service" /etc/systemd/system/credfeto-notification-bot-update.service || die "Failed to install update service unit"
+sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot-update.timer" /etc/systemd/system/credfeto-notification-bot-update.timer || die "Failed to install update timer unit"
 
 info "Reloading systemd"
 sudo systemctl daemon-reload || die "Failed to reload systemd"
 
-info "Enabling credfeto-notification-bot.timer"
-sudo systemctl enable credfeto-notification-bot.timer || die "Failed to enable timer"
+info "Enabling and starting credfeto-notification-bot.service"
+sudo systemctl enable --now credfeto-notification-bot.service || die "Failed to enable/start credfeto-notification-bot.service"
 
-info "Starting credfeto-notification-bot.timer"
-sudo systemctl start credfeto-notification-bot.timer || die "Failed to start timer"
+info "Enabling and starting credfeto-notification-bot-update.timer"
+sudo systemctl enable --now credfeto-notification-bot-update.timer || die "Failed to enable/start credfeto-notification-bot-update.timer"
 
 success "Install complete"

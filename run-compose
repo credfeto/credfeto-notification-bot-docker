@@ -1,0 +1,41 @@
+#!/bin/sh
+
+die() {
+    if [ -t 2 ]; then
+        printf '\n\033[31m✗\033[0m %s\n' "$*" >&2
+    else
+        printf '\n✗ %s\n' "$*" >&2
+    fi
+    exit 1
+}
+
+success() {
+    if [ -t 1 ]; then
+        printf '\n\033[32m✓\033[0m %s\n' "$*"
+    else
+        printf '\n✓ %s\n' "$*"
+    fi
+}
+
+info() {
+    if [ -t 1 ]; then
+        printf '\n\033[32m→\033[0m %s\n' "$*"
+    else
+        printf '\n→ %s\n' "$*"
+    fi
+}
+
+BASEDIR="$(dirname "$(readlink -f "$0")")"
+
+cd "$BASEDIR" || die "Could not change to ${BASEDIR}"
+
+command -v podman >/dev/null 2>&1 || die "podman is required"
+podman compose version >/dev/null 2>&1 || die "podman compose is required"
+
+info "Pulling images"
+podman compose pull || die "Failed to pull images"
+
+info "Starting containers"
+podman compose up -d --remove-orphans || die "Failed to start containers"
+
+success "Containers up to date"

@@ -1,41 +1,39 @@
 #!/bin/sh
 
 die() {
-    printf '\nERROR: %s\n' "$*" >&2
+    if [ -t 2 ]; then
+        printf '\n\033[31m✗\033[0m %s\n' "$*" >&2
+    else
+        printf '\n✗ %s\n' "$*" >&2
+    fi
     exit 1
 }
 
 success() {
-    printf '\nOK: %s\n' "$*"
+    if [ -t 1 ]; then
+        printf '\n\033[32m✓\033[0m %s\n' "$*"
+    else
+        printf '\n✓ %s\n' "$*"
+    fi
 }
 
 info() {
-    printf '\nINFO: %s\n' "$*"
+    if [ -t 1 ]; then
+        printf '\n\033[32m→\033[0m %s\n' "$*"
+    else
+        printf '\n→ %s\n' "$*"
+    fi
 }
 
-allow_ipv4() {
-    address="$1"
-    port="$2"
+# /opt/credfeto-notification-bot-docker is root-owned; re-exec as root once up
+# front rather than sprinkling sudo through every command below.
+if [ "$(id -u)" -ne 0 ]; then
+    exec sudo "$0" "$@"
+fi
 
-    sudo firewall-cmd --permanent --add-rich-rule="rule family=\"ipv4\" source address=\"${address}\" port port=\"${port}\" protocol=\"tcp\" accept" || die "Failed to add IPv4 firewall rule for ${address}:${port}"
-}
-
-allow_ipv6() {
-    address="$1"
-    port="$2"
-
-    sudo firewall-cmd --permanent --add-rich-rule="rule family=\"ipv6\" source address=\"${address}\" port port=\"${port}\" protocol=\"tcp\" accept" || die "Failed to add IPv6 firewall rule for ${address}:${port}"
-}
-
-open_port_for_private_networks() {
-    port="$1"
-
-    allow_ipv4 "10.0.0.0/8" "${port}"
-    allow_ipv4 "172.16.0.0/12" "${port}"
-    allow_ipv4 "192.168.0.0/16" "${port}"
-    allow_ipv6 "fc00::/7" "${port}"
-    allow_ipv6 "fe80::/10" "${port}"
-}
+SERVICE_USER="notification-bot"
+SERVICE_UNIT="credfeto-notification-bot.service"
+STATE_FILE=".state/update-state"
 
 BASEDIR="$(dirname "$(readlink -f "$0")")"
 info "Script dir: $BASEDIR"
@@ -44,27 +42,21 @@ cd "$BASEDIR" || die "Could not change to $BASEDIR"
 
 info "Updating repo"
 git pull --ff-only || die "Failed to pull latest changes"
+NEW_HEAD="$(git rev-parse HEAD)" || die "Failed to read current commit"
 
 [ -f "$BASEDIR/notification/appsettings-local.json" ] || die "Missing notification/appsettings-local.json"
 [ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
 [ -f "$BASEDIR/.env" ] || die "Missing .env file"
-[ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
+[ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 640"
 command -v openssl >/dev/null 2>&1 || die "openssl is required"
-chmod 644 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
+
+info "Normalising config file ownership for ${SERVICE_USER}"
+chgrp "$SERVICE_USER" "$BASEDIR/notification/appsettings-local.json" "$BASEDIR/dispatcher/appsettings-local.json" "$BASEDIR/proxy/credentials.json" "$BASEDIR/.env" || die "Failed to set group ownership on config files"
+chmod g+r "$BASEDIR/notification/appsettings-local.json" "$BASEDIR/dispatcher/appsettings-local.json" "$BASEDIR/.env" || die "Failed to grant group read access on config files"
+chmod 640 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
 
 CERT_DIR="$BASEDIR/certs"
 CERT_FILE="$CERT_DIR/dispatcher.pfx"
-
-info "Ensuring dispatcher-data volume folder exists"
-sudo mkdir -p /data/dispatcher || die "Failed to create /data/dispatcher"
-
-if ! sudo docker volume inspect dispatcher-data >/dev/null 2>&1; then
-    sudo docker volume create --driver local \
-        --opt type=none \
-        --opt o=bind \
-        --opt device=/data/dispatcher \
-        dispatcher-data >/dev/null || die "Failed to create dispatcher-data docker volume"
-fi
 
 info "Ensuring dispatcher certificate exists"
 mkdir -p "$CERT_DIR" || die "Failed to create $CERT_DIR"
@@ -94,15 +86,32 @@ if [ ! -f "$CERT_FILE" ]; then
         -passout pass: || die "Failed to generate $CERT_FILE"
 
     rm -f "$TMP_KEY" "$TMP_CRT" || die "Failed to remove temporary certificate files"
-    chmod 600 "$CERT_FILE" || die "Failed to set permissions on $CERT_FILE"
+    chgrp "$SERVICE_USER" "$CERT_FILE" || die "Failed to set group ownership on $CERT_FILE"
+    chmod 640 "$CERT_FILE" || die "Failed to set permissions on $CERT_FILE"
 fi
 
-info "Configuring firewall rules for TCP port 3000 (private networks only)"
-open_port_for_private_networks "3000"
-sudo firewall-cmd --reload || die "Failed to reload firewall"
+CONFIG_HASH="$(sha256sum "$BASEDIR/notification/appsettings-local.json" "$BASEDIR/dispatcher/appsettings-local.json" "$BASEDIR/proxy/credentials.json" "$BASEDIR/.env" "$CERT_FILE" | sha256sum | awk '{print $1}')" || die "Failed to hash config files"
 
-info "Updating docker"
-sudo docker compose pull || die "Failed to pull docker images"
-sudo docker compose up -d || die "Failed to start docker compose services"
+OLD_HEAD=""
+OLD_CONFIG_HASH=""
+if [ -f "$STATE_FILE" ]; then
+    OLD_HEAD="$(sed -n '1p' "$STATE_FILE")"
+    OLD_CONFIG_HASH="$(sed -n '2p' "$STATE_FILE")"
+fi
+
+# Every podman invocation from this script goes through
+# credfeto-notification-bot.service (KillMode=none), never a direct
+# `runuser ... podman` call here: this oneshot job's own cgroup is reaped
+# by systemd the moment it exits, which would take any directly-spawned
+# container processes down with it.
+if [ "$NEW_HEAD" != "$OLD_HEAD" ] || [ "$CONFIG_HASH" != "$OLD_CONFIG_HASH" ]; then
+    info "Git or config changes detected - restarting ${SERVICE_UNIT}"
+else
+    info "No git or config changes - refreshing images"
+fi
+systemctl restart "$SERVICE_UNIT" || die "Failed to restart ${SERVICE_UNIT}"
+
+mkdir -p "$BASEDIR/.state" || die "Failed to create $BASEDIR/.state"
+printf '%s\n%s\n' "$NEW_HEAD" "$CONFIG_HASH" >"$STATE_FILE" || die "Failed to persist update state"
 
 success "Update complete"

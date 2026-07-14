@@ -1,0 +1,3 @@
+# Ignore local runtime state files
+*
+!.gitignore
