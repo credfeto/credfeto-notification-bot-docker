@@ -47,13 +47,18 @@ NEW_HEAD="$(git rev-parse HEAD)" || die "Failed to read current commit"
 [ -f "$BASEDIR/notification/appsettings-local.json" ] || die "Missing notification/appsettings-local.json"
 [ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
 [ -f "$BASEDIR/.env" ] || die "Missing .env file"
-[ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 640"
+[ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
 command -v openssl >/dev/null 2>&1 || die "openssl is required"
 
 info "Normalising config file ownership for ${SERVICE_USER}"
 chgrp "$SERVICE_USER" "$BASEDIR/notification/appsettings-local.json" "$BASEDIR/dispatcher/appsettings-local.json" "$BASEDIR/proxy/credentials.json" "$BASEDIR/.env" || die "Failed to set group ownership on config files"
 chmod g+r "$BASEDIR/notification/appsettings-local.json" "$BASEDIR/dispatcher/appsettings-local.json" "$BASEDIR/.env" || die "Failed to grant group read access on config files"
-chmod 640 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
+# 640 (owner+group only) broke github-api-proxy on the real host: its
+# containerized process reads this file as some UID rootless podman's user
+# namespace does not map into notification-bot's own group, so it lost
+# read access and crash-looped with no logged error. 644 is what the
+# pre-migration script used and is confirmed working end-to-end.
+chmod 644 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
 
 CERT_DIR="$BASEDIR/certs"
 CERT_FILE="$CERT_DIR/dispatcher.pfx"

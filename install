@@ -65,7 +65,7 @@ cd "$BASEDIR" || die "Could not change to $BASEDIR"
 [ -f "$BASEDIR/notification/appsettings-local.json" ] || die "Missing notification/appsettings-local.json"
 [ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
 
-[ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 640"
+[ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
 
 command -v podman >/dev/null 2>&1 || die "podman is required - install it before running this script"
 podman compose version >/dev/null 2>&1 || die "podman compose is required - install it before running this script"
@@ -128,8 +128,13 @@ info "Granting ${SERVICE_GROUP} read access to ${BASEDIR}"
 sudo chgrp -R "$SERVICE_GROUP" "$BASEDIR" || die "Failed to set group ownership on ${BASEDIR}"
 sudo chmod -R g+rX "$BASEDIR" || die "Failed to grant group read access on ${BASEDIR}"
 
+# 640 (owner+group only) broke github-api-proxy on the real host: its
+# containerized process reads this file as some UID rootless podman's user
+# namespace does not map into notification-bot's own group, so it lost
+# read access and crash-looped with no logged error. 644 is what the
+# pre-migration script used and is confirmed working end-to-end.
 sudo chgrp "$SERVICE_GROUP" "$BASEDIR/proxy/credentials.json" || die "Failed to set group on proxy/credentials.json"
-sudo chmod 640 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
+sudo chmod 644 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
 
 info "Preparing ${DISPATCHER_DATA_DIR}"
 sudo mkdir -p "$DISPATCHER_DATA_DIR" || die "Failed to create ${DISPATCHER_DATA_DIR}"

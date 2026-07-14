@@ -145,7 +145,36 @@ entirely** — rootless podman's `pasta` doesn't do that same bypass, so
 ports that "just worked" under docker are subject to normal firewalld
 rules under podman. `install` now opens 3000, 8080, and 8081 for private
 networks (matching every port `docker-compose.yml` actually publishes),
-not just 3000.
+not just 3000. Also worth knowing (unrelated to this deployment, but hit
+while diagnosing it): a firewalld `docker` zone with `target: ACCEPT` and
+`sources: 172.16.0.0/12` can pre-empt any port-specific rule in the
+`public` zone for traffic from that source range — firewalld resolves
+zones by source address before interface, so a host that ever ran docker
+may have a standing zone that silently blanket-accepts a whole private
+range regardless of destination port.
+
+Once the deployment itself was confirmed healthy, `github-api-proxy` was
+still found crash-looping (`podman compose ps` showing "Up Less than a
+second" despite being created many minutes earlier) with **no output at
+all** from `podman logs`. Root cause: `proxy/credentials.json` had been
+tightened from the pre-migration script's `chmod 644` to `chmod 640`
+(owner+group only) as part of general hardening. Rootless podman checks a
+bind-mounted host file's permissions against the *host-mapped* UID of
+whatever UID the containerized process claims to be internally, via
+`notification-bot`'s subuid range (`200000-265535`) — if
+`github-api-proxy`'s Node process runs as some non-root UID inside its
+image (common), that maps to a host UID that is neither `notification-bot`
+nor its group, so it silently lost read access and crashed before logging
+anything useful. `dispatcher.pfx` happening to work at `640` is most
+likely a coincidence of whatever UID that particular container's process
+maps to, not evidence the general problem doesn't apply. Reverted
+`credentials.json` to `644` (matching the pre-migration script,
+world-readable) in both `install` and `update` — confirmed fixed on the
+real host (stable uptime, no more crash loop). This is a real, deliberate
+trade-off: any local user on the host can read the file, not just root or
+`notification-bot`, and there isn't a narrower fix available without
+hardcoding (and keeping in sync with) `github-api-proxy` image's specific
+internal UID.
 
 ### Remaining caveats
 

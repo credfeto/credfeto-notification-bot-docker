@@ -58,7 +58,8 @@ Use these scripts from the repository root:
 - `notification/appsettings-local.json`
 - `dispatcher/appsettings-local.json`
 - `proxy/credentials.json` (copy from `proxy/credentials.example.json`, then
-  `chmod 640`)
+  `chmod 644` — rootless podman's UID remapping means `github-api-proxy`'s
+  containerized process needs `other`-read to see it; see `docs/README.md`)
 - `.env`
 
 ## Update flow
