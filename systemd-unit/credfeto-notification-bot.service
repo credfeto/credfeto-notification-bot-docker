@@ -1,12 +1,36 @@
 [Unit]
-Description=Update Credfeto Notification Bot Repo
-Requires=network-online.target
+Description=Credfeto Notification Bot containers (rootless podman)
+Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=oneshot
+RemainAfterExit=yes
+# Rootless podman's conmon/container processes are not systemd-managed
+# children in the docker sense - the default KillMode=control-group would
+# have `systemctl restart` kill every running container's cgroup on the
+# stop half of the restart. KillMode=none leaves them alone; run-compose's
+# own `podman compose up -d` is what reconciles state on the start half.
+KillMode=none
+User=notification-bot
+Group=notification-bot
+WorkingDirectory=/opt/credfeto-notification-bot-docker
+# Rootless podman's network backend (pasta/netavark) needs a D-Bus session
+# bus to register with systemd --user; that bus only exists at
+# /run/user/<uid>, provisioned by `loginctl enable-linger notification-bot`
+# (see install). A bespoke RuntimeDirectory= here does not have a bus
+# socket behind it and networking fails outright. XDG_RUNTIME_DIR is set by
+# run-compose itself, computed from the actual running UID - the %U
+# specifier is not reliably this unit's User= UID on every systemd version.
+ExecStart=/opt/credfeto-notification-bot-docker/run-compose
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle
+NoNewPrivileges=yes
+ProtectSystem=strict
+# ProtectHome=yes also masks /run/user/* - which XDG_RUNTIME_DIR above
+# depends on - so it is deliberately left unset here.
+PrivateTmp=yes
+ReadWritePaths=/var/lib/notification-bot /data/dispatcher
 
-WorkingDirectory=/root/work/personal/credfeto-notification-bot-docker
-ExecStart=/root/work/personal/credfeto-notification-bot-docker/update
+[Install]
+WantedBy=multi-user.target

@@ -1,15 +1,5 @@
 ---
 services:
-  watchtower:
-    image: nickfedor/watchtower:latest
-    container_name: watchtower
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    restart: always
-    environment:
-      WATCHTOWER_NOTIFICATIONS_HOSTNAME: notification-bot
-      WATCHTOWER_POLL_INTERVAL: 60
-
   notification-bot:
     container_name: notification-bot
     hostname: notification-bot
@@ -17,8 +7,10 @@ services:
     restart: unless-stopped
     stop_grace_period: 500s
     stop_signal: SIGINT
+    security_opt:
+      - no-new-privileges:true
     volumes:
-      - ./notification/appsettings-local.json:/usr/src/app/appsettings-local.json:r
+      - ./notification/appsettings-local.json:/usr/src/app/appsettings-local.json:ro
 
   dispatcher-bot:
     container_name: dispatcher-bot
@@ -27,11 +19,13 @@ services:
     restart: unless-stopped
     stop_grace_period: 500s
     stop_signal: SIGINT
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "8080:8080"
       - "8081:8081"
     volumes:
-      - ./dispatcher/appsettings-local.json:/usr/src/app/appsettings-local.json:r
+      - ./dispatcher/appsettings-local.json:/usr/src/app/appsettings-local.json:ro
       - ./certs/dispatcher.pfx:/usr/src/app/server.pfx:ro
 
   github-api-proxy:
@@ -41,6 +35,8 @@ services:
     restart: unless-stopped
     stop_grace_period: 500s
     stop_signal: SIGINT
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "${PORT:-3000}:3000"
     environment:

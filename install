@@ -1,40 +1,196 @@
 #!/bin/sh
 
 die() {
-    printf '\nERROR: %s\n' "$*" >&2
+    if [ -t 2 ]; then
+        printf '\n\033[31m✗\033[0m %s\n' "$*" >&2
+    else
+        printf '\n✗ %s\n' "$*" >&2
+    fi
     exit 1
 }
 
 success() {
-    printf '\nOK: %s\n' "$*"
+    if [ -t 1 ]; then
+        printf '\n\033[32m✓\033[0m %s\n' "$*"
+    else
+        printf '\n✓ %s\n' "$*"
+    fi
 }
 
 info() {
-    printf '\nINFO: %s\n' "$*"
+    if [ -t 1 ]; then
+        printf '\n\033[32m→\033[0m %s\n' "$*"
+    else
+        printf '\n→ %s\n' "$*"
+    fi
 }
+
+allow_ipv4() {
+    address="$1"
+    port="$2"
+
+    sudo firewall-cmd --permanent --add-rich-rule="rule family=\"ipv4\" source address=\"${address}\" port port=\"${port}\" protocol=\"tcp\" accept" || die "Failed to add IPv4 firewall rule for ${address}:${port}"
+}
+
+allow_ipv6() {
+    address="$1"
+    port="$2"
+
+    sudo firewall-cmd --permanent --add-rich-rule="rule family=\"ipv6\" source address=\"${address}\" port port=\"${port}\" protocol=\"tcp\" accept" || die "Failed to add IPv6 firewall rule for ${address}:${port}"
+}
+
+open_port_for_private_networks() {
+    port="$1"
+
+    allow_ipv4 "10.0.0.0/8" "${port}"
+    allow_ipv4 "172.16.0.0/12" "${port}"
+    allow_ipv4 "192.168.0.0/16" "${port}"
+    allow_ipv6 "fc00::/7" "${port}"
+    allow_ipv6 "fe80::/10" "${port}"
+}
+
+SERVICE_USER="notification-bot"
+SERVICE_GROUP="notification-bot"
+SERVICE_HOME="/var/lib/notification-bot"
+DISPATCHER_DATA_DIR="/data/dispatcher"
+EXPECTED_BASEDIR="/opt/credfeto-notification-bot-docker"
 
 BASEDIR="$(dirname "$(readlink -f "$0")")"
 info "Script dir: $BASEDIR"
 
 cd "$BASEDIR" || die "Could not change to $BASEDIR"
 
+[ "$BASEDIR" = "$EXPECTED_BASEDIR" ] || die "This checkout must live at ${EXPECTED_BASEDIR} (found ${BASEDIR}) - the systemd units hardcode that path"
+
 [ -f "$BASEDIR/notification/appsettings-local.json" ] || die "Missing notification/appsettings-local.json"
 [ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
 
 [ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
-chmod 644 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
 
-info "Updating systemd scripts"
+command -v podman >/dev/null 2>&1 || die "podman is required - install it before running this script"
+podman compose version >/dev/null 2>&1 || die "podman compose is required - install it before running this script"
+
+info "Creating unprivileged service user ${SERVICE_USER}"
+if ! id "$SERVICE_USER" >/dev/null 2>&1; then
+    sudo useradd --system --create-home --home-dir "$SERVICE_HOME" --shell /usr/sbin/nologin "$SERVICE_USER" || die "Failed to create ${SERVICE_USER} user"
+fi
+
+# Rootless podman's default network backend (pasta/netavark) needs a D-Bus
+# session bus to register itself with systemd --user, which does not exist
+# for a user with no login session. Lingering starts that user manager (and
+# its bus) at boot without a login - required for container networking to
+# work at all, independent of credfeto-notification-bot.service itself
+# staying a plain system unit rather than a --user one.
+if [ "$(loginctl show-user "$SERVICE_USER" -p Linger --value 2>/dev/null)" != "yes" ]; then
+    info "Enabling lingering for ${SERVICE_USER}"
+    sudo loginctl enable-linger "$SERVICE_USER" || die "Failed to enable lingering for ${SERVICE_USER}"
+fi
+
+SERVICE_UID="$(id -u "$SERVICE_USER")" || die "Failed to resolve UID for ${SERVICE_USER}"
+SERVICE_RUNTIME_DIR="/run/user/${SERVICE_UID}"
+
+# With lingering enabled, podman defaults to --cgroup-manager=systemd and
+# asks notification-bot's own systemd --user instance (over its D-Bus
+# session bus) to create a transient scope unit per container. That request
+# comes from credfeto-notification-bot.service, a *system* unit reaching
+# into that user session from outside it, and is rejected with "Permission
+# denied: OCI permission denied" rather than actually managing cgroups.
+# cgroupfs sidesteps needing that cross-boundary request entirely.
+info "Configuring podman to use the cgroupfs cgroup manager for ${SERVICE_USER}"
+sudo install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "${SERVICE_HOME}/.config/containers" || die "Failed to create ${SERVICE_HOME}/.config/containers"
+printf '[engine]\ncgroup_manager = "cgroupfs"\n' | sudo tee "${SERVICE_HOME}/.config/containers/containers.conf" >/dev/null || die "Failed to write containers.conf for ${SERVICE_USER}"
+sudo chown "${SERVICE_USER}:${SERVICE_GROUP}" "${SERVICE_HOME}/.config/containers/containers.conf" || die "Failed to set ownership on containers.conf"
+
+# loginctl enable-linger starts the user manager (and its D-Bus session bus)
+# immediately, but poll briefly in case that hasn't landed yet. If it still
+# hasn't after 10s, nudge it directly - then keep polling for the bus
+# socket rather than assuming that start succeeded synchronously, so a
+# still-missing bus fails loudly here instead of surfacing later as a
+# confusing "failed to create podman volume" error.
+info "Waiting for ${SERVICE_RUNTIME_DIR}"
+_WAITED=0
+_NUDGED=0
+while [ ! -S "${SERVICE_RUNTIME_DIR}/bus" ]; do
+    if [ "$_WAITED" -ge 20 ]; then
+        die "Timed out waiting for ${SERVICE_RUNTIME_DIR}/bus to appear"
+    fi
+    if [ "$_WAITED" -ge 10 ] && [ "$_NUDGED" -eq 0 ]; then
+        sudo systemctl start "user@${SERVICE_UID}.service" || die "Failed to start user@${SERVICE_UID}.service"
+        _NUDGED=1
+    fi
+    sleep 1
+    _WAITED=$((_WAITED + 1))
+done
+
+if ! grep -q "^${SERVICE_USER}:" /etc/subuid 2>/dev/null; then
+    info "Allocating subuid range for ${SERVICE_USER}"
+    sudo usermod --add-subuids 200000-265535 "$SERVICE_USER" || die "Failed to allocate subuid range for ${SERVICE_USER}"
+fi
+
+if ! grep -q "^${SERVICE_USER}:" /etc/subgid 2>/dev/null; then
+    info "Allocating subgid range for ${SERVICE_USER}"
+    sudo usermod --add-subgids 200000-265535 "$SERVICE_USER" || die "Failed to allocate subgid range for ${SERVICE_USER}"
+fi
+
+info "Granting ${SERVICE_GROUP} read access to ${BASEDIR}"
+sudo chgrp -R "$SERVICE_GROUP" "$BASEDIR" || die "Failed to set group ownership on ${BASEDIR}"
+sudo chmod -R g+rX "$BASEDIR" || die "Failed to grant group read access on ${BASEDIR}"
+
+# 640 (owner+group only) broke github-api-proxy on the real host: its
+# containerized process reads this file as some UID rootless podman's user
+# namespace does not map into notification-bot's own group, so it lost
+# read access and crash-looped with no logged error. 644 is what the
+# pre-migration script used and is confirmed working end-to-end.
+sudo chgrp "$SERVICE_GROUP" "$BASEDIR/proxy/credentials.json" || die "Failed to set group on proxy/credentials.json"
+sudo chmod 644 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
+
+info "Preparing ${DISPATCHER_DATA_DIR}"
+sudo mkdir -p "$DISPATCHER_DATA_DIR" || die "Failed to create ${DISPATCHER_DATA_DIR}"
+sudo chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "$DISPATCHER_DATA_DIR" || die "Failed to set ownership on ${DISPATCHER_DATA_DIR}"
+
+info "Registering dispatcher-data podman volume"
+if ! sudo runuser -u "$SERVICE_USER" -- env "HOME=${SERVICE_HOME}" "XDG_RUNTIME_DIR=${SERVICE_RUNTIME_DIR}" podman volume inspect dispatcher-data >/dev/null 2>&1; then
+    sudo runuser -u "$SERVICE_USER" -- env "HOME=${SERVICE_HOME}" "XDG_RUNTIME_DIR=${SERVICE_RUNTIME_DIR}" podman volume create \
+        --opt type=none \
+        --opt o=bind \
+        --opt device="$DISPATCHER_DATA_DIR" \
+        dispatcher-data >/dev/null || die "Failed to create dispatcher-data podman volume"
+fi
+
+# docker manipulates iptables directly for published ports, which often
+# bypasses firewalld's zone filtering entirely - rootless podman's pasta
+# does not do that same bypass, so ports that "just worked" under docker
+# are subject to normal firewalld rules under podman. dispatcher-bot
+# publishes 8080/8081 in addition to github-api-proxy's 3000.
+info "Configuring firewall rules for TCP ports 3000, 8080, 8081 (private networks only)"
+open_port_for_private_networks "3000"
+open_port_for_private_networks "8080"
+open_port_for_private_networks "8081"
+sudo firewall-cmd --reload || die "Failed to reload firewall"
+
+# Pre-migration hosts have a credfeto-notification-bot.timer that triggers
+# credfeto-notification-bot.service by default same-basename matching (no
+# Unit= override) - that .service is now this repo's container runner, not
+# the old root-run update job, so leaving the old timer in place makes it
+# fire against the new unit on its old 5-minute schedule.
+if [ -f /etc/systemd/system/credfeto-notification-bot.timer ]; then
+    info "Removing stale pre-migration credfeto-notification-bot.timer"
+    sudo systemctl disable --now credfeto-notification-bot.timer || die "Failed to disable stale credfeto-notification-bot.timer"
+    sudo rm -f /etc/systemd/system/credfeto-notification-bot.timer || die "Failed to remove stale credfeto-notification-bot.timer"
+fi
+
+info "Installing systemd units"
 sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.service" /etc/systemd/system/credfeto-notification-bot.service || die "Failed to install service unit"
-sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.timer" /etc/systemd/system/credfeto-notification-bot.timer || die "Failed to install timer unit"
+sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot-update.service" /etc/systemd/system/credfeto-notification-bot-update.service || die "Failed to install update service unit"
+sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot-update.timer" /etc/systemd/system/credfeto-notification-bot-update.timer || die "Failed to install update timer unit"
 
 info "Reloading systemd"
 sudo systemctl daemon-reload || die "Failed to reload systemd"
 
-info "Enabling credfeto-notification-bot.timer"
-sudo systemctl enable credfeto-notification-bot.timer || die "Failed to enable timer"
+info "Enabling and starting credfeto-notification-bot.service"
+sudo systemctl enable --now credfeto-notification-bot.service || die "Failed to enable/start credfeto-notification-bot.service"
 
-info "Starting credfeto-notification-bot.timer"
-sudo systemctl start credfeto-notification-bot.timer || die "Failed to start timer"
+info "Enabling and starting credfeto-notification-bot-update.timer"
+sudo systemctl enable --now credfeto-notification-bot-update.timer || die "Failed to enable/start credfeto-notification-bot-update.timer"
 
 success "Install complete"

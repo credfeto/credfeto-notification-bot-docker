@@ -1,0 +1,12 @@
+[Unit]
+Description=Update Credfeto Notification Bot Repo
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+IOSchedulingClass=idle
+CPUSchedulingPolicy=idle
+
+WorkingDirectory=/opt/credfeto-notification-bot-docker
+ExecStart=/opt/credfeto-notification-bot-docker/update
