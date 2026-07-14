@@ -101,15 +101,24 @@ section is lower-severity:
   printenv HOME` actually prints `/var/lib/notification-bot`; if `runuser`
   behaves differently there, the explicit `HOME=` override should still
   win, but this hasn't been exercised end-to-end.
-- **Not tested against the real registry or the real host.** `podman
-  compose config` was used to confirm `docker-compose.yml` parses correctly
-  under podman, and a public test image was pulled to confirm rootless
-  podman itself works, but the actual application images live on
-  `docker-registry.markridgwell.com`, which wasn't reachable from the
-  environment this was developed in, and the full privileged `install` flow
-  (creating a system user, subuid/subgid allocation, firewalld, systemd)
-  was not exercised end-to-end. Run `./install` then `./run-compose`
-  manually and check `podman compose ps` / `journalctl -u
+- **Registry access and pulling were verified; container start/extraction
+  was not.** `docker-registry.markridgwell.com` is reachable and open for
+  reads (no auth needed to list tags or pull) from the environment this was
+  developed in, and with a subuid/subgid range configured, `podman compose
+  pull` against the real `docker-compose.yml` (copied into a scratch
+  directory with placeholder config files) got as far as downloading every
+  layer for all three images. Layer *extraction* then failed on all three
+  with `lchown ... invalid argument` on files such as `/etc/gshadow` and
+  `/var/local` — `kernel.unprivileged_userns_clone` is enabled, so that's
+  not the cause; this looks like a restriction from that particular
+  machine's `linux-hardened` kernel on rootless user-namespace `chown`
+  operations, a known friction point between grsecurity-derived hardened
+  kernels and rootless container runtimes, rather than anything wrong with
+  the compose file, mounts, or subuid range size. It's unknown whether the
+  real deployment host runs a similarly hardened kernel. The full
+  privileged `install` flow (creating a system user, subuid/subgid
+  allocation, firewalld, systemd) was also not exercised end-to-end. Run
+  `./install` then check `podman compose ps` / `journalctl -u
   credfeto-notification-bot.service` on the real host before trusting the
   timer.
 - **Subuid/subgid range.** `install` allocates `200000-265535` to
