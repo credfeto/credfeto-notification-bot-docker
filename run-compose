@@ -30,7 +30,7 @@ BASEDIR="$(dirname "$(readlink -f "$0")")"
 cd "$BASEDIR" || die "Could not change to ${BASEDIR}"
 
 command -v podman >/dev/null 2>&1 || die "podman is required"
-podman compose version >/dev/null 2>&1 || die "podman compose is required"
+podman compose version || die "podman compose is required"
 
 info "Pulling images"
 podman compose pull || die "Failed to pull images"
