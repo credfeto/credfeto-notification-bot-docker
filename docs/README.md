@@ -12,16 +12,25 @@ compose` run by a dedicated unprivileged system user, `notification-bot`.
 
 - `credfeto-notification-bot.service` is the actual container runner. It's
   a boot-time system unit (`WantedBy=multi-user.target`), not a `systemctl
-  --user` unit — the latter would need `loginctl enable-linger` to survive
-  without an active login session, and the ask was explicitly for a system
-  service. It runs `run-compose` as `User=notification-bot`, with
-  `RuntimeDirectory=notification-bot` providing `XDG_RUNTIME_DIR` so
-  rootless podman has somewhere to keep its runtime state. It has no
-  `ExecStop` and sets `KillMode=none`, so that `systemctl restart` doesn't
-  send a cgroup-wide kill to the containers on the stop half before
-  `run-compose` (`podman compose pull && podman compose up -d`) runs again
-  on the start half — `up -d` only recreates containers whose image or
-  config actually changed. **This is unverified** — see "Known gaps" below.
+  --user` unit — the ask was explicitly for a system service, not a user
+  one. It runs `run-compose` as `User=notification-bot`. It still needs
+  `loginctl enable-linger notification-bot` (done in `install`), because
+  rootless podman's network backend (pasta/netavark) registers itself with
+  a D-Bus session bus at `/run/user/<uid>/bus`, and that bus only exists if
+  systemd-logind has started that user's manager — lingering makes it start
+  at boot without a login, independent of the container-runner unit itself
+  staying a plain system unit. `Environment=XDG_RUNTIME_DIR=/run/user/%U`
+  points podman at it. An earlier version of this unit used a bespoke
+  `RuntimeDirectory=notification-bot` (`/run/notification-bot`) instead —
+  that has no bus socket behind it and failed on the real host with
+  `netavark: ... aardvark-dns failed to start` /
+  `couldn't determine address of session bus`; see "Known gaps" for detail.
+  It has no `ExecStop` and sets `KillMode=none`, so that `systemctl
+  restart` doesn't send a cgroup-wide kill to the containers on the stop
+  half before `run-compose` (`podman compose pull && podman compose up -d`)
+  runs again on the start half — `up -d` only recreates containers whose
+  image or config actually changed. **This particular part is still
+  unverified** — see "Known gaps" below.
 - `credfeto-notification-bot-update.timer`/`.service` (renamed from the
   previous `credfeto-notification-bot.timer`/`.service`, which did this job
   under the old docker-based design) still runs as root every 5 minutes,
@@ -47,24 +56,49 @@ compose` run by a dedicated unprivileged system user, `notification-bot`.
   that will reap its own cgroup on exit (see "Known gaps").
 - `credfeto-notification-bot.service` itself never runs as root. It adds
   `NoNewPrivileges=yes`, `ProtectSystem=strict` (with explicit
-  `ReadWritePaths` for the podman storage dir and `/data/dispatcher`),
-  `ProtectHome=yes`, and `PrivateTmp=yes` — **unverified**, see "Known gaps".
+  `ReadWritePaths` for the podman storage dir and `/data/dispatcher`), and
+  `PrivateTmp=yes` — confirmed on the real host not to block podman (image
+  pull and container creation both succeeded under it). `ProtectHome=yes`
+  was tried too but deliberately dropped: it also masks `/run/user/*`,
+  which `XDG_RUNTIME_DIR` now depends on.
 
 ### Known gaps / follow-ups for whoever runs this on the real host
 
-These three are the top priority to verify — everything else in this
-section is lower-severity:
-
+- **[RESOLVED on first real-host `install` run] Container networking failed
+  without a D-Bus session bus.** `./install` ran successfully through user
+  creation, subuid/subgid, permissions, and podman volume registration, but
+  `credfeto-notification-bot.service` itself failed to start. `journalctl
+  -xeu credfeto-notification-bot.service` showed image pull and container
+  *creation* succeeding, then: `failed to move the rootless netns pasta
+  process to the systemd user.slice: dbus: couldn't determine address of
+  session bus`, followed by `aardvark-dns failed to start` and the
+  container failing to start. Root cause: rootless podman's default network
+  backend (pasta + netavark/aardvark-dns) needs a D-Bus session bus, which
+  only exists via `systemd --user` for that account — and nothing
+  provisioned one for a system-unit-only, no-login `notification-bot`.
+  Fixed by having `install` run `loginctl enable-linger notification-bot`
+  (starts that user's manager, and its bus, at boot with no login required)
+  and pointing `XDG_RUNTIME_DIR` at the real `/run/user/<uid>` it manages,
+  in both the systemd unit (`/run/user/%U`) and the `runuser` calls in
+  `install`/`reset` (`/run/user/$(id -u notification-bot)`) — replacing the
+  bespoke `RuntimeDirectory=notification-bot` from the first version of
+  this unit, which had no bus socket behind it. Also had to drop
+  `ProtectHome=yes` from the unit, since it independently masks
+  `/run/user/*` too. **This fix has not yet been re-run on the real host**
+  — the first `install` attempt is what surfaced the original problem;
+  confirm the retry actually gets all three containers running
+  (`podman compose ps` as `notification-bot`, or `systemctl status
+  credfeto-notification-bot.service` for a clean "active").
 - **`systemctl restart credfeto-notification-bot.service` may still kill
-  the containers.** Rootless podman is daemonless: `conmon`/container
-  processes normally live inside the launching unit's cgroup, and systemd's
-  default `KillMode=control-group` kills the whole cgroup on the stop half
-  of a restart — the absence of an `ExecStop` line doesn't prevent that,
-  only `KillMode=none` (now set) does. This wasn't verified against a real
-  rootless podman + systemd setup — no host with a properly-provisioned
-  rootless user was available while writing this. **Before trusting
-  `update`'s behaviour** (it restarts this unit on every 5-minute tick),
-  watch `podman ps`/`podman compose ps` across a manual
+  the containers — still unverified.** Rootless podman is daemonless:
+  `conmon`/container processes normally live inside the launching unit's
+  cgroup, and systemd's default `KillMode=control-group` kills the whole
+  cgroup on the stop half of a restart — the absence of an `ExecStop` line
+  doesn't prevent that, only `KillMode=none` (set on this unit) does. The
+  first real-host run never got as far as a restart cycle (it failed on
+  first start, see above), so this is still just plausible-but-unverified.
+  **Before trusting `update`'s behaviour** (it restarts this unit on every
+  5-minute tick), watch `podman ps`/`podman compose ps` across a manual
   `systemctl restart credfeto-notification-bot.service` and confirm the
   containers are recreated, not bounced with a gap, and that they survive
   at all. If they still get killed, look at `podman generate systemd` or
@@ -78,49 +112,26 @@ section is lower-severity:
   running podman directly) exists to avoid. Verify with
   `systemctl start credfeto-notification-bot-update.service`, not a manual
   `sudo ./update`.
-- **The systemd sandboxing directives are just as unverified as the
-  container hardening deliberately left out below.** `ProtectSystem=strict`,
-  `ProtectHome=yes`, and `PrivateTmp=yes` together are a classic way for a
-  rootless podman unit to fail outright (can't write its storage/lock
-  files) — they're plausible-but-unverified, not a proven-safe default. After
-  `install` enables the unit, check `systemctl status
-  credfeto-notification-bot.service`. If it fails to start, strip these
-  three down to `NoNewPrivileges=yes` only, confirm the unit starts, then
-  re-add one at a time (with `ReadWritePaths` adjusted as needed) rather
-  than assuming all three together are fine.
-- **`HOME` for the `notification-bot` user in `runuser` calls.** `install`
-  and `reset` invoke podman as `notification-bot` via
+- **[Confirmed on the real host] `ProtectSystem=strict`/`PrivateTmp=yes`
+  don't block podman.** The first `install` run got as far as `podman`
+  pulling an image and creating a container under these directives before
+  failing on the networking issue above — so unlike `ProtectHome=yes`
+  (dropped, see above), these two are proven compatible, not just
+  plausible.
+- **[Confirmed on the real host] `HOME` handling in the `runuser` calls
+  works.** `install` and `reset` invoke podman as `notification-bot` via
   `runuser -u notification-bot -- env HOME=/var/lib/notification-bot
-  XDG_RUNTIME_DIR=/run/notification-bot ...`, explicitly setting `HOME`
-  because `runuser` without `--login` otherwise leaves the caller's `HOME`
-  (`/root`, since these scripts self-elevate) in place, which would point
-  rootless podman's storage at the wrong (root-owned, unwritable) path.
-  `credfeto-notification-bot.service` doesn't have this problem —
-  `User=notification-bot` makes systemd set `HOME` correctly on its own.
-  Confirm on the real host that `runuser -u notification-bot --
-  printenv HOME` actually prints `/var/lib/notification-bot`; if `runuser`
-  behaves differently there, the explicit `HOME=` override should still
-  win, but this hasn't been exercised end-to-end.
-- **Registry access and pulling were verified; container start/extraction
-  was not.** `docker-registry.markridgwell.com` is reachable and open for
-  reads (no auth needed to list tags or pull) from the environment this was
-  developed in, and with a subuid/subgid range configured, `podman compose
-  pull` against the real `docker-compose.yml` (copied into a scratch
-  directory with placeholder config files) got as far as downloading every
-  layer for all three images. Layer *extraction* then failed on all three
-  with `lchown ... invalid argument` on files such as `/etc/gshadow` and
-  `/var/local` — `kernel.unprivileged_userns_clone` is enabled, so that's
-  not the cause; this looks like a restriction from that particular
-  machine's `linux-hardened` kernel on rootless user-namespace `chown`
-  operations, a known friction point between grsecurity-derived hardened
-  kernels and rootless container runtimes, rather than anything wrong with
-  the compose file, mounts, or subuid range size. It's unknown whether the
-  real deployment host runs a similarly hardened kernel. The full
-  privileged `install` flow (creating a system user, subuid/subgid
-  allocation, firewalld, systemd) was also not exercised end-to-end. Run
-  `./install` then check `podman compose ps` / `journalctl -u
-  credfeto-notification-bot.service` on the real host before trusting the
-  timer.
+  XDG_RUNTIME_DIR=... ...`, explicitly setting `HOME` because `runuser`
+  without `--login` otherwise leaves the caller's `HOME` (`/root`, since
+  these scripts self-elevate) in place. The real-host `install` run's
+  podman volume registration step (which goes through this exact path)
+  succeeded, confirming the override works as intended.
+- **[Confirmed on the real host] Registry access, pulling, and rootless
+  container creation all work**, up to the networking issue above.
+  `docker-registry.markridgwell.com` pulled all three images and podman
+  created at least one container successfully before the D-Bus/pasta
+  failure stopped the rest. subuid/subgid and storage permissions are not
+  implicated by any of the errors seen.
 - **Subuid/subgid range.** `install` allocates `200000-265535` to
   `notification-bot` if it doesn't already have a range in `/etc/subuid` /
   `/etc/subgid`. If that range collides with another user on the host,

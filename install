@@ -75,6 +75,33 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
     sudo useradd --system --create-home --home-dir "$SERVICE_HOME" --shell /usr/sbin/nologin "$SERVICE_USER" || die "Failed to create ${SERVICE_USER} user"
 fi
 
+# Rootless podman's default network backend (pasta/netavark) needs a D-Bus
+# session bus to register itself with systemd --user, which does not exist
+# for a user with no login session. Lingering starts that user manager (and
+# its bus) at boot without a login - required for container networking to
+# work at all, independent of credfeto-notification-bot.service itself
+# staying a plain system unit rather than a --user one.
+if [ "$(loginctl show-user "$SERVICE_USER" -p Linger --value 2>/dev/null)" != "yes" ]; then
+    info "Enabling lingering for ${SERVICE_USER}"
+    sudo loginctl enable-linger "$SERVICE_USER" || die "Failed to enable lingering for ${SERVICE_USER}"
+fi
+
+SERVICE_UID="$(id -u "$SERVICE_USER")" || die "Failed to resolve UID for ${SERVICE_USER}"
+SERVICE_RUNTIME_DIR="/run/user/${SERVICE_UID}"
+
+# loginctl enable-linger starts the user manager (and its D-Bus session bus)
+# immediately, but poll briefly in case that hasn't landed yet.
+info "Waiting for ${SERVICE_RUNTIME_DIR}"
+_WAITED=0
+while [ ! -S "${SERVICE_RUNTIME_DIR}/bus" ]; do
+    if [ "$_WAITED" -ge 10 ]; then
+        sudo systemctl start "user@${SERVICE_UID}.service" || die "Failed to start user@${SERVICE_UID}.service"
+        break
+    fi
+    sleep 1
+    _WAITED=$((_WAITED + 1))
+done
+
 if ! grep -q "^${SERVICE_USER}:" /etc/subuid 2>/dev/null; then
     info "Allocating subuid range for ${SERVICE_USER}"
     sudo usermod --add-subuids 200000-265535 "$SERVICE_USER" || die "Failed to allocate subuid range for ${SERVICE_USER}"
@@ -96,12 +123,9 @@ info "Preparing ${DISPATCHER_DATA_DIR}"
 sudo mkdir -p "$DISPATCHER_DATA_DIR" || die "Failed to create ${DISPATCHER_DATA_DIR}"
 sudo chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "$DISPATCHER_DATA_DIR" || die "Failed to set ownership on ${DISPATCHER_DATA_DIR}"
 
-info "Ensuring ${SERVICE_USER} runtime directory exists"
-sudo install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0700 "/run/${SERVICE_USER}" || die "Failed to create /run/${SERVICE_USER}"
-
 info "Registering dispatcher-data podman volume"
-if ! sudo runuser -u "$SERVICE_USER" -- env "HOME=${SERVICE_HOME}" "XDG_RUNTIME_DIR=/run/${SERVICE_USER}" podman volume inspect dispatcher-data >/dev/null 2>&1; then
-    sudo runuser -u "$SERVICE_USER" -- env "HOME=${SERVICE_HOME}" "XDG_RUNTIME_DIR=/run/${SERVICE_USER}" podman volume create \
+if ! sudo runuser -u "$SERVICE_USER" -- env "HOME=${SERVICE_HOME}" "XDG_RUNTIME_DIR=${SERVICE_RUNTIME_DIR}" podman volume inspect dispatcher-data >/dev/null 2>&1; then
+    sudo runuser -u "$SERVICE_USER" -- env "HOME=${SERVICE_HOME}" "XDG_RUNTIME_DIR=${SERVICE_RUNTIME_DIR}" podman volume create \
         --opt type=none \
         --opt o=bind \
         --opt device="$DISPATCHER_DATA_DIR" \

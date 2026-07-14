@@ -15,14 +15,19 @@ KillMode=none
 User=notification-bot
 Group=notification-bot
 WorkingDirectory=/opt/credfeto-notification-bot-docker
-RuntimeDirectory=notification-bot
-Environment=XDG_RUNTIME_DIR=/run/notification-bot
+# Rootless podman's network backend (pasta/netavark) needs a D-Bus session
+# bus to register with systemd --user; that bus only exists at
+# /run/user/%U, provisioned by `loginctl enable-linger notification-bot`
+# (see install). A bespoke RuntimeDirectory= here does not have a bus
+# socket behind it and networking fails outright.
+Environment=XDG_RUNTIME_DIR=/run/user/%U
 ExecStart=/opt/credfeto-notification-bot-docker/run-compose
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle
 NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=yes
+# ProtectHome=yes also masks /run/user/* - which XDG_RUNTIME_DIR above
+# depends on - so it is deliberately left unset here.
 PrivateTmp=yes
 ReadWritePaths=/var/lib/notification-bot /data/dispatcher
 
