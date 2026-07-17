@@ -14,3 +14,7 @@ This is an index of local instructions that apply to just this project.
 
 ## Instruction Files
 <!-- Locally Maintained -->
+
+| File | Covers |
+| --- | --- |
+| [deployment-troubleshooting.instructions.md](deployment-troubleshooting.instructions.md) | Real-host incidents on `notifications.lan`: checkout ownership requirements for the `update` self-healing loop, reading container logs (journald driver, `runuser` cwd gotcha) |
