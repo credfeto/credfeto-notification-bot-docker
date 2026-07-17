@@ -11,6 +11,7 @@ Please ADD ALL Changes to the UNRELEASED SECTION and not a specific release
 ### Added
 - Added .ai-instructions and ai/local/index.md from cs-template standard
 ### Fixed
+- update now checks that the checkout is root-owned before pulling, with an actionable error, instead of silently failing at git's dubious-ownership check every timer tick
 ### Changed
 ### Removed
 ### Deployment Changes

@@ -68,6 +68,14 @@ info "Script dir: $BASEDIR"
 cd "$BASEDIR" || die "Could not change to $BASEDIR"
 
 info "Updating repo"
+# git refuses to operate in a repo it doesn't own ("dubious ownership") -
+# this script always runs as root (see the re-exec above), so BASEDIR must
+# stay root-owned. Checked explicitly up front rather than pattern-matching
+# git's error text after the fact, which is fragile across git versions and
+# locales; a mis-chown here otherwise silently wedges this self-healing
+# timer at this exact line, every tick, with no further symptom.
+BASEDIR_OWNER_UID="$(stat -c '%u' "$BASEDIR")" || die "Failed to stat $BASEDIR"
+[ "$BASEDIR_OWNER_UID" -eq 0 ] || die "$BASEDIR must be owned by root for this root-run script to use git in it (found UID ${BASEDIR_OWNER_UID}) - fix with: chown root:${SERVICE_GROUP} ${BASEDIR}"
 git pull --ff-only || die "Failed to pull latest changes"
 NEW_HEAD="$(git rev-parse HEAD)" || die "Failed to read current commit"
 
