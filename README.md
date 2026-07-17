@@ -55,6 +55,24 @@ Use these scripts from the repository root:
 ./reset
 ```
 
+## Logs
+
+`podman compose logs -f` / `podman logs <container>` come back empty when run
+manually as the `notification-bot` user, with no error — the containers use
+the `journald` log driver, and rootless podman's journald *reader* cannot see
+entries conmon writes to the **system** journal. Read the system journal
+directly instead:
+
+```bash
+# live tail
+sudo journalctl CONTAINER_NAME=notification-bot -f
+
+# last 50 lines, no pager
+sudo journalctl CONTAINER_NAME=notification-bot -n 50 --no-pager
+```
+
+Swap the container name for `dispatcher-bot` or `github-api-proxy` as needed.
+
 ## Required local files
 
 - `notification/appsettings-local.json`
