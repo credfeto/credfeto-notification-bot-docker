@@ -25,7 +25,12 @@ WorkingDirectory=/opt/credfeto-notification-bot-docker
 ExecStart=/opt/credfeto-notification-bot-docker/run-compose
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle
-NoNewPrivileges=yes
+# NoNewPrivileges=yes blocks the kernel from honouring newuidmap/newgidmap's
+# cap_setuid/cap_setgid file capabilities on exec, which rootless podman
+# needs to build a brand-new user namespace - hit on every reboot (the old
+# namespace does not survive it), failing with "newuidmap: Could not set
+# caps". Restarts that reuse an already-established namespace do not need
+# newuidmap again, which is why this only shows up after a reboot.
 ProtectSystem=strict
 # ProtectHome=yes also masks /run/user/* - which XDG_RUNTIME_DIR above
 # depends on - so it is deliberately left unset here.
