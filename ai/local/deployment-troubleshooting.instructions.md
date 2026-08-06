@@ -28,9 +28,26 @@
   Swap the container name for `dispatcher-bot` / `github-api-proxy` as needed.
 - Separately: `runuser -u <user> -- ...` does **not** change the working directory - it inherits the caller's cwd verbatim. Running it from a directory `notification-bot` can't read (e.g. an admin's own home directory) breaks `podman`/`podman-compose` outright with `cannot chdir to <dir>: Permission denied`, unrelated to the journald issue above. Always `cd /opt/credfeto-notification-bot-docker` (or pass `-H`, but note that repoints `HOME` too) before a manual `runuser -u notification-bot -- podman ...` invocation.
 
+## Stale Rootless-Podman Pause Process After `PrivateTmp` Teardown (MANDATORY)
+
+- `credfeto-notification-bot.service` sets `PrivateTmp=yes`. Every start of that unit gets its own private `/tmp` and `/var/tmp` bind mounts, torn down (unmounted, source directory deleted) when that particular service instance ends.
+- Rootless podman keeps a long-lived "pause" process per UID (`/run/user/<uid>/libpod/tmp/pause.pid`, cgroup `podman-pause-*.scope`, reparented to PID 1) so it doesn't have to rebuild the user namespace on every invocation. If that pause process was created while a `PrivateTmp` mount namespace from one service instance was current, it keeps that namespace's view of `/var/tmp` for as long as it lives - including after the owning service instance (and its private tmp) is gone.
+- Symptom: `podman pull` / `podman-compose pull` (and hence `credfeto-notification-bot.service`) fails with `creating a temporary directory: mkdir /var/tmp/container_images_storageNNNNNNNN: no such file or directory`, even though `/var/tmp` plainly exists and a plain `mkdir` there (outside podman) succeeds. `sudo runuser -u notification-bot -- podman-compose pull` reproduces it directly; a plain `mkdir` test does not, because the plain shell isn't joined to the stale namespace.
+- Confirm before fixing: `sudo cat /run/user/965/libpod/tmp/pause.pid`, then `sudo cat /proc/<pid>/mountinfo | grep var/tmp` - a source path containing `.../credfeto-notification-bot.service-*/tmp//deleted` confirms this is the cause. `podman ps -a` (as `notification-bot`, cwd `/opt/credfeto-notification-bot-docker`) should show no running containers to lose - this is safe to fix by killing the pause process.
+- Fix: `sudo kill <pause-pid>` then `sudo rm -f /run/user/965/libpod/tmp/pause.pid`, so the next podman invocation creates a fresh pause process against the current namespace. Then `sudo systemctl restart credfeto-notification-bot.service`.
+- This is a podman/systemd interaction bug, not something fixable from this repo's unit files (removing `PrivateTmp` would reopen other hardening/host-safety gaps) - treat it as an operational runbook step, not a code fix.
+
+## Missing `:latest` Tag on `docker-registry.markridgwell.com` (informational)
+
+- Separately from the above: `podman-compose pull` can fail on just one image with `manifest unknown` for the `:latest` tag, even though `docker/build-push-action` reported a successful push of `:latest` for that exact commit in CI. Confirm with `curl -s https://docker-registry.markridgwell.com/v2/<repo>/tags/list` - if `latest` is absent while commit-sha tags are present (and those sha tags are for old commits, not the latest main build), the registry has somehow lost the `latest` tag after a genuinely successful push.
+- This is a registry-side issue (`docker-registry.markridgwell.com`, host `192.168.150.250`) outside this repo and outside `notifications.lan` - not something to chase further from here.
+- Workaround that resolved it on 2026-08-06: `gh run rerun <run-id> --repo credfeto/credfeto-github-api-proxy` on the last successful main-branch "Docker: Build and Push" run re-pushed `:latest` successfully. If it recurs, re-running the source repo's build-and-push workflow is the quick fix; only investigate the registry itself if re-running stops working.
+
 ## Source
 
 Real-host incidents on `notifications.lan`, 2026-07-18:
 
 - A manual `chown -R notification-bot:notification-bot /opt/credfeto-notification-bot-docker` (done in response to seeing mixed ownership across the tree) silently wedged the update timer for hours. Diagnosed via `sudo journalctl -u credfeto-notification-bot-update.service` and `sudo journalctl -u credfeto-notification-bot.service`.
 - `podman compose logs -f` returning nothing when run manually as `notification-bot`, diagnosed via `podman inspect` (journald driver) and confirmed working via `sudo journalctl CONTAINER_NAME=...`.
+
+2026-08-06: all three containers down after a host reboot. `credfeto-notification-bot.service` failed with `podman-compose pull` exiting 125. Root cause was two independent problems stacked on top of each other: a stale rootless-podman pause process left over from a prior `PrivateTmp` service instance (see above), and a separately missing `:latest` tag for `credfeto/github-api-proxy` on the registry despite a reportedly successful CI push. Diagnosed via `podman unshare cat /proc/self/mountinfo`, `/proc/<pause-pid>/mountinfo`, and `curl .../v2/<repo>/tags/list` against the registry directly.
