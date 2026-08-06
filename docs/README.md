@@ -72,10 +72,16 @@ compose` run by a dedicated unprivileged system user, `notification-bot`.
   containers — that's fine because it's run interactively, not spawned by
   a systemd oneshot unit that will reap its own cgroup on exit.
 - `credfeto-notification-bot.service` itself never runs as root. It adds
-  `NoNewPrivileges=yes`, `ProtectSystem=strict` (with explicit
-  `ReadWritePaths` for the podman storage dir and `/data/dispatcher`), and
-  `PrivateTmp=yes` — confirmed on the real host not to block podman (image
-  pull and container creation both succeeded under it). `ProtectHome=yes`
+  `ProtectSystem=strict` (with explicit `ReadWritePaths` for the podman
+  storage dir and `/data/dispatcher`). `NoNewPrivileges=yes` was tried too
+  but deliberately dropped: it blocks the kernel from honouring
+  `newuidmap`/`newgidmap`'s file capabilities, which rootless podman needs
+  to build a user namespace after every reboot (see "Issues found" below).
+  `PrivateTmp=yes` was also tried and dropped: rootless podman's long-lived
+  per-UID "pause" process outlives any single start of this unit, and can
+  end up bound to a private `/tmp` mount that a later start of this unit
+  tears down — see `ai/local/deployment-troubleshooting.instructions.md`
+  for the failure mode this caused on the real host. `ProtectHome=yes`
   was tried too but deliberately dropped: it also masks `/run/user/*`,
   which `XDG_RUNTIME_DIR` now depends on.
 
@@ -88,8 +94,8 @@ reached `active (exited)` with all three containers `Up ... (healthy)` in
 credfeto-notification-bot.service` left all three container IDs and
 uptimes untouched (no recreation, no gap). Registry access/pulling, the
 `notification-bot` user/subuid/subgid setup, `runuser`'s `HOME=`/
-`XDG_RUNTIME_DIR=` overrides, and `ProtectSystem=strict`/`PrivateTmp=yes`
-were all exercised along the way with no issues.
+`XDG_RUNTIME_DIR=` overrides, and `ProtectSystem=strict` were all exercised
+along the way with no issues.
 
 ### Issues found and fixed during real-host testing
 

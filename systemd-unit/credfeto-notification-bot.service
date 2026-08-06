@@ -34,7 +34,18 @@ CPUSchedulingPolicy=idle
 ProtectSystem=strict
 # ProtectHome=yes also masks /run/user/* - which XDG_RUNTIME_DIR above
 # depends on - so it is deliberately left unset here.
-PrivateTmp=yes
+# PrivateTmp=yes was tried and reverted: rootless podman keeps a long-lived
+# per-UID "pause" process (reparented to PID 1) that outlives any single
+# start of this unit, to avoid rebuilding the user namespace on every
+# invocation. When that pause process is created while a PrivateTmp mount
+# namespace is current, it keeps that namespace's view of /var/tmp for as
+# long as it lives - including after systemd tears down this unit's private
+# tmp on exit. The next start's podman-compose pull then fails with
+# "mkdir /var/tmp/container_images_storage...: no such file or directory",
+# and nothing auto-recovers - see ai/local/deployment-troubleshooting.
+# instructions.md. ProtectSystem=strict plus the explicit ReadWritePaths
+# below already scope this service's writable surface tightly; that is
+# judged sufficient without PrivateTmp for this single-purpose service.
 ReadWritePaths=/var/lib/notification-bot /data/dispatcher
 
 [Install]

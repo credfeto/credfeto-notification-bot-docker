@@ -16,6 +16,7 @@ Please ADD ALL Changes to the UNRELEASED SECTION and not a specific release
 ### Fixed
 - update now checks that the checkout is root-owned before pulling, with an actionable error, instead of silently failing at git's dubious-ownership check every timer tick
 - Removed NoNewPrivileges=yes from credfeto-notification-bot.service, which blocked rootless podman's newuidmap/newgidmap from creating a user namespace on every reboot, causing the containers to fail to start
+- Removed PrivateTmp=yes from credfeto-notification-bot.service - rootless podman's long-lived pause process could end up bound to a private /tmp mount torn down by a later restart, breaking image pulls with no automatic recovery
 ### Changed
 ### Deprecated
 ### Removed
