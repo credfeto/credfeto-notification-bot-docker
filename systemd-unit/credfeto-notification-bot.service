@@ -1,52 +1,12 @@
 [Unit]
-Description=Credfeto Notification Bot containers (rootless podman)
-Wants=network-online.target
+Description=Update Credfeto Notification Bot Repo
+Requires=network-online.target
 After=network-online.target
 
 [Service]
 Type=oneshot
-RemainAfterExit=yes
-# Rootless podman's conmon/container processes are not systemd-managed
-# children in the docker sense - the default KillMode=control-group would
-# have `systemctl restart` kill every running container's cgroup on the
-# stop half of the restart. KillMode=none leaves them alone; run-compose's
-# own `podman compose up -d` is what reconciles state on the start half.
-KillMode=none
-User=notification-bot
-Group=notification-bot
-WorkingDirectory=/opt/credfeto-notification-bot-docker
-# Rootless podman's network backend (pasta/netavark) needs a D-Bus session
-# bus to register with systemd --user; that bus only exists at
-# /run/user/<uid>, provisioned by `loginctl enable-linger notification-bot`
-# (see install). A bespoke RuntimeDirectory= here does not have a bus
-# socket behind it and networking fails outright. XDG_RUNTIME_DIR is set by
-# run-compose itself, computed from the actual running UID - the %U
-# specifier is not reliably this unit's User= UID on every systemd version.
-ExecStart=/opt/credfeto-notification-bot-docker/run-compose
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle
-# NoNewPrivileges=yes blocks the kernel from honouring newuidmap/newgidmap's
-# cap_setuid/cap_setgid file capabilities on exec, which rootless podman
-# needs to build a brand-new user namespace - hit on every reboot (the old
-# namespace does not survive it), failing with "newuidmap: Could not set
-# caps". Restarts that reuse an already-established namespace do not need
-# newuidmap again, which is why this only shows up after a reboot.
-ProtectSystem=strict
-# ProtectHome=yes also masks /run/user/* - which XDG_RUNTIME_DIR above
-# depends on - so it is deliberately left unset here.
-# PrivateTmp=yes was tried and reverted: rootless podman keeps a long-lived
-# per-UID "pause" process (reparented to PID 1) that outlives any single
-# start of this unit, to avoid rebuilding the user namespace on every
-# invocation. When that pause process is created while a PrivateTmp mount
-# namespace is current, it keeps that namespace's view of /var/tmp for as
-# long as it lives - including after systemd tears down this unit's private
-# tmp on exit. The next start's podman-compose pull then fails with
-# "mkdir /var/tmp/container_images_storage...: no such file or directory",
-# and nothing auto-recovers - see ai/local/deployment-troubleshooting.
-# instructions.md. ProtectSystem=strict plus the explicit ReadWritePaths
-# below already scope this service's writable surface tightly; that is
-# judged sufficient without PrivateTmp for this single-purpose service.
-ReadWritePaths=/var/lib/notification-bot /data/dispatcher
 
-[Install]
-WantedBy=multi-user.target
+WorkingDirectory=/opt/credfeto-notification-bot-docker
+ExecStart=/opt/credfeto-notification-bot-docker/update

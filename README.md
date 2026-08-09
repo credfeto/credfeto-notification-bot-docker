@@ -1,49 +1,10 @@
 # credfeto-notification-bot-docker
 
-Podman compose deployment for the notification bot, running as an
-unprivileged rootless systemd service.
+Docker compose for notification bot.
 
 ## Documentation
 
 - Additional notes live in `docs/`.
-
-## Architecture
-
-- The containers are run by `credfeto-notification-bot.service`, a system
-  systemd unit that starts at boot (`WantedBy=multi-user.target`) as the
-  unprivileged `notification-bot` user via rootless podman. It has no
-  standing privileges beyond read access to this checkout and write access
-  to the `dispatcher-data` volume's backing directory. Its `ExecStart` is
-  the `run-compose` script (`podman compose pull && podman compose up -d`,
-  then `podman image prune -f` to reclaim disk space from the previous
-  `:latest` image each pull leaves dangling).
-- `credfeto-notification-bot-update.timer` fires every 5 minutes and runs
-  the root-run `update` script, which pulls this repo, validates/refreshes
-  local config, and always restarts `credfeto-notification-bot.service`
-  (which re-runs `run-compose`, i.e. pull + idempotent `up -d`, so unchanged
-  containers aren't disrupted) — this also picks up new `:latest` image
-  pushes on every tick. Every podman invocation goes through that one
-  service unit rather than being run directly from `update`, so it always
-  runs under `KillMode=none` and isn't at risk of being killed when the
-  timer-triggered job's own cgroup is reaped.
-- `install` performs one-time, root-only setup: creates the `notification-bot`
-  system user with a subuid/subgid range, grants it read access to this
-  checkout and ownership of the data directory, registers the external
-  `dispatcher-data` podman volume, opens the required firewall ports, and
-  installs/enables the systemd units.
-- `reset` tears down the running containers and re-runs `install`.
-
-## One-time host setup
-
-This checkout must live at `/opt/credfeto-notification-bot-docker` — the
-systemd units hardcode that path. Clone (or move) it there, then:
-
-```bash
-./install
-```
-
-`install` requires `podman` (with the `podman compose` provider) already
-installed; it will not install it for you.
 
 ## Operations
 
@@ -55,37 +16,22 @@ Use these scripts from the repository root:
 ./reset
 ```
 
-## Logs
+### One-time migration cleanup
 
-`podman compose logs -f` / `podman logs <container>` come back empty when run
-manually as the `notification-bot` user, with no error — the containers use
-the `journald` log driver, and rootless podman's journald *reader* cannot see
-entries conmon writes to the **system** journal. Read the system journal
-directly instead:
-
-```bash
-# live tail
-sudo journalctl CONTAINER_NAME=notification-bot -f
-
-# last 50 lines, no pager
-sudo journalctl CONTAINER_NAME=notification-bot -n 50 --no-pager
-```
-
-Swap the container name for `dispatcher-bot` or `github-api-proxy` as needed.
+If this host previously ran the rootless-podman deployment (see
+`docs/README.md`), run `./cleanup-podman-migration --yes` once before
+`./install` to remove the `notification-bot` system user, the podman-era
+systemd units, and the extra firewall rules it opened.
 
 ## Required local files
 
 - `notification/appsettings-local.json`
 - `dispatcher/appsettings-local.json`
-- `proxy/credentials.json` (copy from `proxy/credentials.example.json`, then
-  `chmod 644` — rootless podman's UID remapping means `github-api-proxy`'s
-  containerized process needs `other`-read to see it; see `docs/README.md`)
-- `.env`
+- `proxy/credentials.json` (copy from `proxy/credentials.example.json`)
 
 ## Update flow
 
-The `credfeto-notification-bot-update.timer` runs `update` every 5 minutes;
-it can also be run manually.
+Run the `update` script to pull the repo and redeploy containers.
 
 During `update`:
 
@@ -97,11 +43,6 @@ During `update`:
 - The certificate is self-signed and generated with `openssl`.
 - The compose mount for `dispatcher-bot` maps:
   - `./certs/dispatcher.pfx:/usr/src/app/server.pfx:ro`
-- `credfeto-notification-bot.service` is restarted on every run. The log
-  line distinguishes a restart triggered by a git/config change
-  (`notification/appsettings-local.json`, `dispatcher/appsettings-local.json`,
-  `proxy/credentials.json`, `.env`, `certs/dispatcher.pfx`) from a routine
-  tick, but the action taken is the same either way.
 
 If you want to regenerate the certificate, delete `certs/dispatcher.pfx` and
 run `./update` again.
