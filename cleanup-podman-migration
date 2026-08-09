@@ -1,0 +1,111 @@
+#!/bin/sh
+# One-off script to undo, on the real host, what the rootless-podman-era
+# `install` (PRs #14/#15/#18/#19) did before the deployment was reverted
+# back to docker (issue #20). Not called by `install`/`update`/`reset` -
+# run this once by hand on notifications.lan, then run `./install` to bring
+# up the docker-based deployment.
+#
+# Deliberately does NOT uninstall the podman package itself - per
+# .ai-instructions Environment Safety, this repo never uninstalls packages
+# or modifies system config beyond its own footprint. Stop using podman,
+# don't remove it.
+#
+# Deliberately does NOT touch /data/dispatcher - that's dispatcher-bot's
+# real data, backing the dispatcher-data volume under both podman and
+# docker.
+
+die() {
+    if [ -t 2 ]; then
+        printf '\n\033[31m✗\033[0m %s\n' "$*" >&2
+    else
+        printf '\n✗ %s\n' "$*" >&2
+    fi
+    exit 1
+}
+
+success() {
+    if [ -t 1 ]; then
+        printf '\n\033[32m✓\033[0m %s\n' "$*"
+    else
+        printf '\n✓ %s\n' "$*"
+    fi
+}
+
+info() {
+    if [ -t 1 ]; then
+        printf '\n\033[32m→\033[0m %s\n' "$*"
+    else
+        printf '\n→ %s\n' "$*"
+    fi
+}
+
+remove_ipv4_rule() {
+    address="$1"
+    port="$2"
+
+    sudo firewall-cmd --permanent --remove-rich-rule="rule family=\"ipv4\" source address=\"${address}\" port port=\"${port}\" protocol=\"tcp\" accept" 2>/dev/null || true
+}
+
+remove_ipv6_rule() {
+    address="$1"
+    port="$2"
+
+    sudo firewall-cmd --permanent --remove-rich-rule="rule family=\"ipv6\" source address=\"${address}\" port port=\"${port}\" protocol=\"tcp\" accept" 2>/dev/null || true
+}
+
+close_port_for_private_networks() {
+    port="$1"
+
+    remove_ipv4_rule "10.0.0.0/8" "${port}"
+    remove_ipv4_rule "172.16.0.0/12" "${port}"
+    remove_ipv4_rule "192.168.0.0/16" "${port}"
+    remove_ipv6_rule "fc00::/7" "${port}"
+    remove_ipv6_rule "fe80::/10" "${port}"
+}
+
+SERVICE_USER="notification-bot"
+SERVICE_HOME="/var/lib/notification-bot"
+
+if [ "$1" != "--yes" ]; then
+    die "This removes the ${SERVICE_USER} system user (and its home dir), the podman-era systemd units, its loginctl linger, and the firewall rules opened for ports 8080/8081. It leaves /data/dispatcher and the podman package itself untouched. Re-run as: $0 --yes"
+fi
+
+info "Stopping podman-run containers"
+if id "$SERVICE_USER" >/dev/null 2>&1; then
+    SERVICE_UID="$(id -u "$SERVICE_USER")" || die "Failed to resolve UID for ${SERVICE_USER}"
+    SERVICE_RUNTIME_DIR="/run/user/${SERVICE_UID}"
+    if [ -d /opt/credfeto-notification-bot-docker ]; then
+        (
+            cd /opt/credfeto-notification-bot-docker && sudo runuser -u "$SERVICE_USER" -- env "HOME=${SERVICE_HOME}" "XDG_RUNTIME_DIR=${SERVICE_RUNTIME_DIR}" podman compose down
+        ) || info "podman compose down failed or nothing was running - continuing"
+    fi
+else
+    info "${SERVICE_USER} user does not exist - nothing to stop"
+fi
+
+info "Disabling podman-era systemd units"
+sudo systemctl disable --now credfeto-notification-bot.service 2>/dev/null || true
+sudo systemctl disable --now credfeto-notification-bot-update.timer 2>/dev/null || true
+sudo systemctl disable --now credfeto-notification-bot-update.service 2>/dev/null || true
+sudo rm -f /etc/systemd/system/credfeto-notification-bot-update.service /etc/systemd/system/credfeto-notification-bot-update.timer || die "Failed to remove podman-era update unit files"
+sudo systemctl daemon-reload || die "Failed to reload systemd"
+
+if id "$SERVICE_USER" >/dev/null 2>&1; then
+    info "Disabling lingering for ${SERVICE_USER}"
+    sudo loginctl disable-linger "$SERVICE_USER" 2>/dev/null || true
+
+    info "Removing ${SERVICE_USER} system user and home directory"
+    sudo userdel -r "$SERVICE_USER" 2>/dev/null || sudo userdel "$SERVICE_USER" || die "Failed to remove ${SERVICE_USER} user"
+else
+    info "${SERVICE_USER} user does not exist - nothing to remove"
+fi
+
+info "Removing leftover subuid/subgid entries for ${SERVICE_USER}"
+sudo sed -i "/^${SERVICE_USER}:/d" /etc/subuid /etc/subgid 2>/dev/null || true
+
+info "Closing firewall rules for TCP ports 8080/8081 (private networks only) - port 3000 stays open"
+close_port_for_private_networks "8080"
+close_port_for_private_networks "8081"
+sudo firewall-cmd --reload || die "Failed to reload firewall"
+
+success "Podman-era host cleanup complete - run ./install next to bring up the docker-based deployment"
