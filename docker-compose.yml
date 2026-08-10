@@ -18,7 +18,7 @@ services:
     stop_grace_period: 500s
     stop_signal: SIGINT
     volumes:
-      - ./notification/appsettings-local.json:/usr/src/app/appsettings-local.json:r
+      - ./notification/appsettings-local.json:/usr/src/app/appsettings-local.json:ro
 
   dispatcher-bot:
     container_name: dispatcher-bot
@@ -31,8 +31,9 @@ services:
       - "8080:8080"
       - "8081:8081"
     volumes:
-      - ./dispatcher/appsettings-local.json:/usr/src/app/appsettings-local.json:r
+      - ./dispatcher/appsettings-local.json:/usr/src/app/appsettings-local.json:ro
       - ./certs/dispatcher.pfx:/usr/src/app/server.pfx:ro
+      - dispatcher-data:/usr/src/app/data
 
   github-api-proxy:
     container_name: github-api-proxy
