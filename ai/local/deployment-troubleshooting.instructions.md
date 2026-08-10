@@ -2,6 +2,26 @@
 
 [Back to Local AI Memory Index](index.md)
 
+## `dispatcher-data` Volume Is Writable Only Because `dispatcher-bot` Runs As Root
+
+- `docker-compose.yml` mounts the `dispatcher-data` external volume (bind-backed by
+  `/data/dispatcher`, created root:root 0755 by `update`) read-write at
+  `/usr/src/app/data` on `dispatcher-bot`. This exists so `credfeto/credfeto-dispatcher`'s
+  periodic JSON snapshot of its in-memory store (added in
+  [credfeto-dispatcher#211](https://github.com/credfeto/credfeto-dispatcher/pull/211))
+  survives container recreation instead of being lost with the writable layer.
+- This only works because `credfeto-dispatcher`'s `Dockerfile` has no `USER` directive - the
+  container process runs as `root`, which can write to a root-owned bind mount with no
+  further permission changes needed.
+- If that Dockerfile is ever changed to run as a non-root user (the global docker
+  instructions recommend this), the mount becomes silently unwritable for that user: no
+  container crash, just a logged `SnapshotSaveFailed` on every write attempt and the
+  snapshot never persisting. Containers otherwise report healthy, so this needs an explicit
+  `docker logs dispatcher-bot | grep SnapshotSaveFailed` check to catch, not just `docker ps`.
+- Fix if that happens: `update` needs to `chown <uid>:<gid> /data/dispatcher` to the image's
+  internal UID/GID after `mkdir -p`, idempotently, alongside the existing directory/volume
+  creation block.
+
 ## Missing `:latest` Tag on `docker-registry.markridgwell.com` (informational)
 
 - `docker compose pull` can fail on just one image with `manifest unknown` for the `:latest` tag, even though `docker/build-push-action` reported a successful push of `:latest` for that exact commit in CI. Confirm with `curl -s https://docker-registry.markridgwell.com/v2/<repo>/tags/list` - if `latest` is absent while commit-sha tags are present (and those sha tags are for old commits, not the latest main build), the registry has somehow lost the `latest` tag after a genuinely successful push.
