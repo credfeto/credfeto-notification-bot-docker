@@ -38,7 +38,7 @@ services:
   github-api-proxy:
     container_name: github-api-proxy
     hostname: github-api-proxy
-    image: docker-registry.markridgwell.com/credfeto/github-api-proxy:latest
+    image: ghcr.io/credfeto/github-api-proxy:latest
     restart: unless-stopped
     stop_grace_period: 500s
     stop_signal: SIGINT
