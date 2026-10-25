@@ -84,6 +84,7 @@ git pull --ff-only || die "Failed to pull latest changes"
 
 [ -f "$BASEDIR/notification/appsettings-local.json" ] || die "Missing notification/appsettings-local.json"
 [ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
+[ -f "$BASEDIR/workflow-mcp/appsettings-local.json" ] || die "Missing workflow-mcp/appsettings-local.json"
 [ -f "$BASEDIR/.env" ] || die "Missing .env file"
 [ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
 command -v openssl >/dev/null 2>&1 || die "openssl is required"
@@ -103,9 +104,11 @@ if ! sudo docker volume inspect dispatcher-data >/dev/null 2>&1; then
 fi
 
 ensure_certificate "dispatcher" "dispatcher-bot"
+ensure_certificate "workflow-mcp" "workflow-mcp"
 
-info "Configuring firewall rules for TCP port 3000 (private networks only)"
+info "Configuring firewall rules for TCP ports 3000 and 8091 (private networks only)"
 open_port_for_private_networks "3000"
+open_port_for_private_networks "8091"
 sudo firewall-cmd --reload || die "Failed to reload firewall"
 
 info "Updating docker"
