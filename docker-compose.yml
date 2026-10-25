@@ -35,6 +35,19 @@ services:
       - ./certs/dispatcher.pfx:/usr/src/app/server.pfx:ro
       - dispatcher-data:/usr/src/app/data
 
+  workflow-mcp:
+    container_name: workflow-mcp
+    hostname: workflow-mcp
+    image: ghcr.io/credfeto/workflow-mcp:latest
+    restart: unless-stopped
+    stop_grace_period: 500s
+    stop_signal: SIGINT
+    ports:
+      - "8091:8081"
+    volumes:
+      - ./workflow-mcp/appsettings-local.json:/usr/src/app/appsettings-local.json:ro
+      - ./certs/workflow-mcp.pfx:/usr/src/app/server.pfx:ro
+
   github-api-proxy:
     container_name: github-api-proxy
     hostname: github-api-proxy
