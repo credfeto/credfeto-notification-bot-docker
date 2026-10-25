@@ -13,6 +13,7 @@ Please ADD ALL Changes to the UNRELEASED SECTION and not a specific release
 ### Security
 ### Added
 - Added .ai-instructions and ai/local/index.md from cs-template standard
+- TBD - to be finalized after review
 ### Fixed
 - update now checks that the checkout is root-owned before pulling, with an actionable error, instead of silently failing at git's dubious-ownership check every timer tick
 - Removed NoNewPrivileges=yes from credfeto-notification-bot.service, which blocked rootless podman's newuidmap/newgidmap from creating a user namespace on every reboot, causing the containers to fail to start
