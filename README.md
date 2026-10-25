@@ -45,7 +45,9 @@ During `update`:
 - The compose mount for `dispatcher-bot` maps:
   - `./certs/dispatcher.pfx:/usr/src/app/server.pfx:ro`
 - `certs/workflow-mcp.pfx` is created automatically in the same way, with the
-  same empty/non-empty directory handling.
+  same empty/non-empty directory handling. `update` then sets its owner to
+  `1654:1654`, the non-root `app` user the `workflow-mcp` image runs as, so the
+  container can read it while it stays mode `600`.
 - The compose mount for `workflow-mcp` maps:
   - `./certs/workflow-mcp.pfx:/usr/src/app/server.pfx:ro`
 - `workflow-mcp` serves HTTPS on host port `8091`, mapped to container port

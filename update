@@ -40,6 +40,7 @@ open_port_for_private_networks() {
 ensure_certificate() {
     name="$1"
     common_name="$2"
+    owner="${3:-}"
     cert_file="$CERT_DIR/${name}.pfx"
 
     info "Ensuring ${name} certificate exists"
@@ -71,6 +72,11 @@ ensure_certificate() {
 
         rm -f "$tmp_key" "$tmp_crt" || die "Failed to remove temporary certificate files"
         chmod 600 "$cert_file" || die "Failed to set permissions on $cert_file"
+    fi
+
+    # Applied on every run, not just on creation, so a file created before the owner was set is corrected
+    if [ -n "$owner" ]; then
+        sudo chown "$owner" "$cert_file" || die "Failed to set owner of $cert_file to $owner"
     fi
 }
 
@@ -104,7 +110,8 @@ if ! sudo docker volume inspect dispatcher-data >/dev/null 2>&1; then
 fi
 
 ensure_certificate "dispatcher" "dispatcher-bot"
-ensure_certificate "workflow-mcp" "workflow-mcp"
+# workflow-mcp runs as the .NET image's non-root app user (UID/GID 1654), which cannot read a root-owned 0600 file
+ensure_certificate "workflow-mcp" "workflow-mcp" "1654:1654"
 
 info "Configuring firewall rules for TCP ports 3000 and 8091 (private networks only)"
 open_port_for_private_networks "3000"
