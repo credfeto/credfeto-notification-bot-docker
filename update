@@ -37,6 +37,43 @@ open_port_for_private_networks() {
     allow_ipv6 "fe80::/10" "${port}"
 }
 
+ensure_certificate() {
+    name="$1"
+    common_name="$2"
+    cert_file="$CERT_DIR/${name}.pfx"
+
+    info "Ensuring ${name} certificate exists"
+    mkdir -p "$CERT_DIR" || die "Failed to create $CERT_DIR"
+
+    if [ -d "$cert_file" ]; then
+        if [ -z "$(ls -A "$cert_file" 2>/dev/null)" ]; then
+            rmdir "$cert_file" || die "Failed to remove empty directory at $cert_file"
+        else
+            die "$cert_file exists as a non-empty directory; remove or rename it, then rerun update"
+        fi
+    fi
+
+    if [ ! -f "$cert_file" ]; then
+        tmp_key="$CERT_DIR/${name}.key"
+        tmp_crt="$CERT_DIR/${name}.crt"
+
+        openssl req -x509 -nodes -newkey rsa:4096 \
+            -keyout "$tmp_key" \
+            -out "$tmp_crt" \
+            -days 3650 \
+            -subj "/CN=${common_name}" || die "Failed to generate self-signed certificate"
+
+        openssl pkcs12 -export \
+            -out "$cert_file" \
+            -inkey "$tmp_key" \
+            -in "$tmp_crt" \
+            -passout pass: || die "Failed to generate $cert_file"
+
+        rm -f "$tmp_key" "$tmp_crt" || die "Failed to remove temporary certificate files"
+        chmod 600 "$cert_file" || die "Failed to set permissions on $cert_file"
+    fi
+}
+
 BASEDIR="$(dirname "$(readlink -f "$0")")"
 info "Script dir: $BASEDIR"
 
@@ -53,7 +90,6 @@ command -v openssl >/dev/null 2>&1 || die "openssl is required"
 chmod 644 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
 
 CERT_DIR="$BASEDIR/certs"
-CERT_FILE="$CERT_DIR/dispatcher.pfx"
 
 info "Ensuring dispatcher-data volume folder exists"
 sudo mkdir -p /data/dispatcher || die "Failed to create /data/dispatcher"
@@ -66,36 +102,7 @@ if ! sudo docker volume inspect dispatcher-data >/dev/null 2>&1; then
         dispatcher-data >/dev/null || die "Failed to create dispatcher-data docker volume"
 fi
 
-info "Ensuring dispatcher certificate exists"
-mkdir -p "$CERT_DIR" || die "Failed to create $CERT_DIR"
-
-if [ -d "$CERT_FILE" ]; then
-    if [ -z "$(ls -A "$CERT_FILE" 2>/dev/null)" ]; then
-        rmdir "$CERT_FILE" || die "Failed to remove empty directory at $CERT_FILE"
-    else
-        die "$CERT_FILE exists as a non-empty directory; remove or rename it, then rerun update"
-    fi
-fi
-
-if [ ! -f "$CERT_FILE" ]; then
-    TMP_KEY="$CERT_DIR/dispatcher.key"
-    TMP_CRT="$CERT_DIR/dispatcher.crt"
-
-    openssl req -x509 -nodes -newkey rsa:4096 \
-        -keyout "$TMP_KEY" \
-        -out "$TMP_CRT" \
-        -days 3650 \
-        -subj "/CN=dispatcher-bot" || die "Failed to generate self-signed certificate"
-
-    openssl pkcs12 -export \
-        -out "$CERT_FILE" \
-        -inkey "$TMP_KEY" \
-        -in "$TMP_CRT" \
-        -passout pass: || die "Failed to generate $CERT_FILE"
-
-    rm -f "$TMP_KEY" "$TMP_CRT" || die "Failed to remove temporary certificate files"
-    chmod 600 "$CERT_FILE" || die "Failed to set permissions on $CERT_FILE"
-fi
+ensure_certificate "dispatcher" "dispatcher-bot"
 
 info "Configuring firewall rules for TCP port 3000 (private networks only)"
 open_port_for_private_networks "3000"
