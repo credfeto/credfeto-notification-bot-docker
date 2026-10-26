@@ -23,6 +23,7 @@ Please ADD ALL Changes to the UNRELEASED SECTION and not a specific release
 - Corrected the invalid :r mount mode to :ro on both appsettings-local.json mounts, which made docker-compose.yml unparseable by non-Docker compose tooling
 - Renamed the tracked notifications folder to notification, so the compose and script paths match the folder name
 - github-api-proxy always publishes host port 3000, matching the port update always opens in the firewall, so a PORT override can no longer leave the proxy unreachable on the opened port
+- install and update remove an empty directory that Docker creates in place of a missing bind-mounted config file (appsettings-local.json or proxy credentials.json) or the TLS certificate, and stop with an actionable message when that directory is not empty, instead of the containers failing to start
 ### Changed
 ### Deprecated
 ### Removed
