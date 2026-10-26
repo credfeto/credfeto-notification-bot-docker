@@ -58,4 +58,14 @@ During `update`:
   only.
 
 If you want to regenerate a certificate, delete `certs/dispatcher.pfx` or
-`certs/workflow-mcp.pfx` and run `./update` again.
+`certs/workflow-mcp.pfx` and run `./update` again. `update` does not recreate a
+container whose configuration is unchanged, and a running container's file
+bind mount keeps pointing at the old certificate, so recreate the affected
+container afterwards:
+
+```bash
+sudo docker compose up -d --force-recreate dispatcher-bot
+sudo docker compose up -d --force-recreate workflow-mcp
+```
+
+Run only the line for the certificate you regenerated.
