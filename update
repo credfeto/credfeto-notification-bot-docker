@@ -44,6 +44,7 @@ remove_empty_mount_directory() {
     if [ -d "$path" ]; then
         if [ -z "$(ls -A "$path" 2>/dev/null)" ]; then
             sudo rmdir "$path" || die "Failed to remove empty directory at $path"
+            info "Removed empty directory Docker created at $path; once $path exists as a file, run 'sudo docker compose up -d --force-recreate' because the running container still has the old directory mounted"
         else
             die "$path exists as a non-empty directory; remove or rename it, then rerun update"
         fi
