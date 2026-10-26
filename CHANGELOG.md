@@ -22,6 +22,7 @@ Please ADD ALL Changes to the UNRELEASED SECTION and not a specific release
 - Removed PrivateTmp=yes from credfeto-notification-bot.service - rootless podman's long-lived pause process could end up bound to a private /tmp mount torn down by a later restart, breaking image pulls with no automatic recovery
 - Corrected the invalid :r mount mode to :ro on both appsettings-local.json mounts, which made docker-compose.yml unparseable by non-Docker compose tooling
 - Renamed the tracked notifications folder to notification, so the compose and script paths match the folder name
+- github-api-proxy always publishes host port 3000, matching the port update always opens in the firewall, so a PORT override can no longer leave the proxy unreachable on the opened port
 ### Changed
 ### Deprecated
 ### Removed
