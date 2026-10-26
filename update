@@ -54,23 +54,35 @@ ensure_certificate() {
     fi
 
     if [ ! -f "$cert_file" ]; then
-        tmp_key="$CERT_DIR/${name}.key"
-        tmp_crt="$CERT_DIR/${name}.crt"
+        # Private (0700) directory inside certs/ so the unencrypted key is never readable by others and the
+        # finished .pfx can be renamed into place on the same filesystem
+        tmp_dir="$(mktemp -d "$CERT_DIR/.${name}.XXXXXX")" || die "Failed to create temporary directory for ${name} certificate"
+        # die exits the script, so the EXIT trap removes the unencrypted key on every failure path
+        trap 'rm -rf "$tmp_dir"' EXIT
+        trap 'exit 1' HUP INT TERM
 
-        openssl req -x509 -nodes -newkey rsa:4096 \
+        tmp_key="$tmp_dir/${name}.key"
+        tmp_crt="$tmp_dir/${name}.crt"
+        tmp_pfx="$tmp_dir/${name}.pfx"
+
+        # umask is scoped to the subshells so the rest of the script keeps its own
+        (umask 077 && openssl req -x509 -nodes -newkey rsa:4096 \
             -keyout "$tmp_key" \
             -out "$tmp_crt" \
             -days 3650 \
-            -subj "/CN=${common_name}" || die "Failed to generate self-signed certificate"
+            -subj "/CN=${common_name}") || die "Failed to generate self-signed certificate"
 
-        openssl pkcs12 -export \
-            -out "$cert_file" \
+        (umask 077 && openssl pkcs12 -export \
+            -out "$tmp_pfx" \
             -inkey "$tmp_key" \
             -in "$tmp_crt" \
-            -passout pass: || die "Failed to generate $cert_file"
+            -passout pass:) || die "Failed to generate $cert_file"
 
-        rm -f "$tmp_key" "$tmp_crt" || die "Failed to remove temporary certificate files"
-        chmod 600 "$cert_file" || die "Failed to set permissions on $cert_file"
+        chmod 600 "$tmp_pfx" || die "Failed to set permissions on $tmp_pfx"
+        mv "$tmp_pfx" "$cert_file" || die "Failed to move certificate to $cert_file"
+
+        rm -rf "$tmp_dir" || die "Failed to remove temporary certificate directory $tmp_dir"
+        trap - EXIT HUP INT TERM
     fi
 }
 
