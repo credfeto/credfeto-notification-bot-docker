@@ -50,6 +50,14 @@ remove_empty_mount_directory() {
     fi
 }
 
+require_mount_file() {
+    mount_file="$1"
+    missing_message="$2"
+
+    remove_empty_mount_directory "$mount_file"
+    [ -f "$mount_file" ] || die "$missing_message"
+}
+
 ensure_certificate() {
     name="$1"
     common_name="$2"
@@ -104,15 +112,11 @@ git pull --ff-only || die "Failed to pull latest changes"
 # workflow-mcp runs as the .NET image's non-root app user (UID/GID 1654), which cannot read root-owned 0600 files
 WORKFLOW_MCP_OWNER="1654:1654"
 
-remove_empty_mount_directory "$BASEDIR/notification/appsettings-local.json"
-[ -f "$BASEDIR/notification/appsettings-local.json" ] || die "Missing notification/appsettings-local.json"
-remove_empty_mount_directory "$BASEDIR/dispatcher/appsettings-local.json"
-[ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
-remove_empty_mount_directory "$BASEDIR/workflow-mcp/appsettings-local.json"
-[ -f "$BASEDIR/workflow-mcp/appsettings-local.json" ] || die "Missing workflow-mcp/appsettings-local.json"
+require_mount_file "$BASEDIR/notification/appsettings-local.json" "Missing notification/appsettings-local.json"
+require_mount_file "$BASEDIR/dispatcher/appsettings-local.json" "Missing dispatcher/appsettings-local.json"
+require_mount_file "$BASEDIR/workflow-mcp/appsettings-local.json" "Missing workflow-mcp/appsettings-local.json"
 [ -f "$BASEDIR/.env" ] || die "Missing .env file"
-remove_empty_mount_directory "$BASEDIR/proxy/credentials.json"
-[ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
+require_mount_file "$BASEDIR/proxy/credentials.json" "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
 command -v openssl >/dev/null 2>&1 || die "openssl is required"
 chmod 644 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
 
