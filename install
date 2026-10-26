@@ -13,15 +13,32 @@ info() {
     printf '\nINFO: %s\n' "$*"
 }
 
+remove_empty_mount_directory() {
+    path="$1"
+
+    # Docker creates a root-owned directory at a bind-mount source that is missing when compose starts
+    if [ -d "$path" ]; then
+        if [ -z "$(ls -A "$path" 2>/dev/null)" ]; then
+            sudo rmdir "$path" || die "Failed to remove empty directory at $path"
+        else
+            die "$path exists as a non-empty directory; remove or rename it, then rerun install"
+        fi
+    fi
+}
+
 BASEDIR="$(dirname "$(readlink -f "$0")")"
 info "Script dir: $BASEDIR"
 
 cd "$BASEDIR" || die "Could not change to $BASEDIR"
 
+remove_empty_mount_directory "$BASEDIR/notification/appsettings-local.json"
 [ -f "$BASEDIR/notification/appsettings-local.json" ] || die "Missing notification/appsettings-local.json"
+remove_empty_mount_directory "$BASEDIR/dispatcher/appsettings-local.json"
 [ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
+remove_empty_mount_directory "$BASEDIR/workflow-mcp/appsettings-local.json"
 [ -f "$BASEDIR/workflow-mcp/appsettings-local.json" ] || die "Missing workflow-mcp/appsettings-local.json"
 
+remove_empty_mount_directory "$BASEDIR/proxy/credentials.json"
 [ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
 chmod 644 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
 
