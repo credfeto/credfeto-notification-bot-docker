@@ -88,9 +88,14 @@ cd "$BASEDIR" || die "Could not change to $BASEDIR"
 info "Updating repo"
 git pull --ff-only || die "Failed to pull latest changes"
 
+# workflow-mcp runs as the .NET image's non-root app user (UID/GID 1654), which cannot read root-owned 0600 files
+WORKFLOW_MCP_OWNER="1654:1654"
+
 [ -f "$BASEDIR/notification/appsettings-local.json" ] || die "Missing notification/appsettings-local.json"
 [ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
 [ -f "$BASEDIR/workflow-mcp/appsettings-local.json" ] || die "Missing workflow-mcp/appsettings-local.json"
+# Owner only, not mode, because the file may hold secrets; applied on every run so an existing file is corrected too
+sudo chown "$WORKFLOW_MCP_OWNER" "$BASEDIR/workflow-mcp/appsettings-local.json" || die "Failed to set owner of workflow-mcp/appsettings-local.json to $WORKFLOW_MCP_OWNER"
 [ -f "$BASEDIR/.env" ] || die "Missing .env file"
 [ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
 command -v openssl >/dev/null 2>&1 || die "openssl is required"
@@ -110,8 +115,7 @@ if ! sudo docker volume inspect dispatcher-data >/dev/null 2>&1; then
 fi
 
 ensure_certificate "dispatcher" "dispatcher-bot"
-# workflow-mcp runs as the .NET image's non-root app user (UID/GID 1654), which cannot read a root-owned 0600 file
-ensure_certificate "workflow-mcp" "workflow-mcp" "1654:1654"
+ensure_certificate "workflow-mcp" "workflow-mcp" "$WORKFLOW_MCP_OWNER"
 
 info "Configuring firewall rules for TCP ports 3000 and 8091 (private networks only)"
 open_port_for_private_networks "3000"

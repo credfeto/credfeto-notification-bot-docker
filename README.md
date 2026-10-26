@@ -48,6 +48,9 @@ During `update`:
   same empty/non-empty directory handling. `update` then sets its owner to
   `1654:1654`, the non-root `app` user the `workflow-mcp` image runs as, so the
   container can read it while it stays mode `600`.
+- `workflow-mcp/appsettings-local.json` also has its owner set to `1654:1654`
+  on every run, so the container can read it. Its mode is left unchanged
+  because it may hold secrets.
 - The compose mount for `workflow-mcp` maps:
   - `./certs/workflow-mcp.pfx:/usr/src/app/server.pfx:ro`
 - `workflow-mcp` serves HTTPS on host port `8091`, mapped to container port
