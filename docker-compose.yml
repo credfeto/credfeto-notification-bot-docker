@@ -63,7 +63,7 @@ services:
     stop_grace_period: 500s
     stop_signal: SIGINT
     ports:
-      - "${PORT:-3000}:3000"
+      - "3000:3000"
     environment:
       - CREDENTIALS_FILE=/proxy/credentials.json
       - PORT=3000
