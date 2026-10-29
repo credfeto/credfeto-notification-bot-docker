@@ -27,6 +27,7 @@ systemd units, and the extra firewall rules it opened.
 
 - `notification/appsettings-local.json`
 - `dispatcher/appsettings-local.json`
+- `workflow-mcp/appsettings-local.json`
 - `proxy/credentials.json` (copy from `proxy/credentials.example.json`)
 
 ## Update flow
@@ -43,6 +44,28 @@ During `update`:
 - The certificate is self-signed and generated with `openssl`.
 - The compose mount for `dispatcher-bot` maps:
   - `./certs/dispatcher.pfx:/usr/src/app/server.pfx:ro`
+- `certs/workflow-mcp.pfx` is created automatically in the same way, with the
+  same empty/non-empty directory handling. `update` then sets its owner to
+  `1654:1654`, the non-root `app` user the `workflow-mcp` image runs as, so the
+  container can read it while it stays mode `600`.
+- `workflow-mcp/appsettings-local.json` also has its owner set to `1654:1654`
+  on every run, so the container can read it. Its mode is left unchanged
+  because it may hold secrets.
+- The compose mount for `workflow-mcp` maps:
+  - `./certs/workflow-mcp.pfx:/usr/src/app/server.pfx:ro`
+- `workflow-mcp` serves HTTPS on host port `8091`, mapped to container port
+  `8081`. `update` opens TCP port `8091` in the firewall for private networks
+  only.
 
-If you want to regenerate the certificate, delete `certs/dispatcher.pfx` and
-run `./update` again.
+If you want to regenerate a certificate, delete `certs/dispatcher.pfx` or
+`certs/workflow-mcp.pfx` and run `./update` again. `update` does not recreate a
+container whose configuration is unchanged, and a running container's file
+bind mount keeps pointing at the old certificate, so recreate the affected
+container afterwards:
+
+```bash
+sudo docker compose up -d --force-recreate dispatcher-bot
+sudo docker compose up -d --force-recreate workflow-mcp
+```
+
+Run only the line for the certificate you regenerated.

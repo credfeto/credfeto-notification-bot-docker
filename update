@@ -37,6 +37,71 @@ open_port_for_private_networks() {
     allow_ipv6 "fe80::/10" "${port}"
 }
 
+remove_empty_mount_directory() {
+    path="$1"
+
+    # Docker creates a root-owned directory at a bind-mount source that is missing when compose starts
+    if [ -d "$path" ]; then
+        if [ -z "$(ls -A "$path" 2>/dev/null)" ]; then
+            sudo rmdir "$path" || die "Failed to remove empty directory at $path"
+            info "Removed empty directory Docker created at $path; once $path exists as a file, run 'sudo docker compose up -d --force-recreate' because the running container still has the old directory mounted"
+        else
+            die "$path exists as a non-empty directory; remove or rename it, then rerun update"
+        fi
+    fi
+}
+
+require_mount_file() {
+    mount_file="$1"
+    missing_message="$2"
+
+    remove_empty_mount_directory "$mount_file"
+    [ -f "$mount_file" ] || die "$missing_message"
+}
+
+ensure_certificate() {
+    name="$1"
+    common_name="$2"
+    cert_file="$CERT_DIR/${name}.pfx"
+
+    info "Ensuring ${name} certificate exists"
+    mkdir -p "$CERT_DIR" || die "Failed to create $CERT_DIR"
+
+    remove_empty_mount_directory "$cert_file"
+
+    if [ ! -f "$cert_file" ]; then
+        # Private (0700) directory inside certs/ so the unencrypted key is never readable by others and the
+        # finished .pfx can be renamed into place on the same filesystem
+        tmp_dir="$(mktemp -d "$CERT_DIR/.${name}.XXXXXX")" || die "Failed to create temporary directory for ${name} certificate"
+        # die exits the script, so the EXIT trap removes the unencrypted key on every failure path
+        trap 'rm -rf "$tmp_dir"' EXIT
+        trap 'exit 1' HUP INT TERM
+
+        tmp_key="$tmp_dir/${name}.key"
+        tmp_crt="$tmp_dir/${name}.crt"
+        tmp_pfx="$tmp_dir/${name}.pfx"
+
+        # umask is scoped to the subshells so the rest of the script keeps its own
+        (umask 077 && openssl req -x509 -nodes -newkey rsa:4096 \
+            -keyout "$tmp_key" \
+            -out "$tmp_crt" \
+            -days 3650 \
+            -subj "/CN=${common_name}") || die "Failed to generate self-signed certificate"
+
+        (umask 077 && openssl pkcs12 -export \
+            -out "$tmp_pfx" \
+            -inkey "$tmp_key" \
+            -in "$tmp_crt" \
+            -passout pass:) || die "Failed to generate $cert_file"
+
+        chmod 600 "$tmp_pfx" || die "Failed to set permissions on $tmp_pfx"
+        mv "$tmp_pfx" "$cert_file" || die "Failed to move certificate to $cert_file"
+
+        rm -rf "$tmp_dir" || die "Failed to remove temporary certificate directory $tmp_dir"
+        trap - EXIT HUP INT TERM
+    fi
+}
+
 BASEDIR="$(dirname "$(readlink -f "$0")")"
 info "Script dir: $BASEDIR"
 
@@ -45,15 +110,18 @@ cd "$BASEDIR" || die "Could not change to $BASEDIR"
 info "Updating repo"
 git pull --ff-only || die "Failed to pull latest changes"
 
-[ -f "$BASEDIR/notification/appsettings-local.json" ] || die "Missing notification/appsettings-local.json"
-[ -f "$BASEDIR/dispatcher/appsettings-local.json" ] || die "Missing dispatcher/appsettings-local.json"
+# workflow-mcp runs as the .NET image's non-root app user (UID/GID 1654), which cannot read root-owned 0600 files
+WORKFLOW_MCP_OWNER="1654:1654"
+
+require_mount_file "$BASEDIR/notification/appsettings-local.json" "Missing notification/appsettings-local.json"
+require_mount_file "$BASEDIR/dispatcher/appsettings-local.json" "Missing dispatcher/appsettings-local.json"
+require_mount_file "$BASEDIR/workflow-mcp/appsettings-local.json" "Missing workflow-mcp/appsettings-local.json"
 [ -f "$BASEDIR/.env" ] || die "Missing .env file"
-[ -f "$BASEDIR/proxy/credentials.json" ] || die "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
+require_mount_file "$BASEDIR/proxy/credentials.json" "Missing proxy/credentials.json - copy proxy/credentials.example.json, fill in credentials, and run chmod 644"
 command -v openssl >/dev/null 2>&1 || die "openssl is required"
 chmod 644 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
 
 CERT_DIR="$BASEDIR/certs"
-CERT_FILE="$CERT_DIR/dispatcher.pfx"
 
 info "Ensuring dispatcher-data volume folder exists"
 sudo mkdir -p /data/dispatcher || die "Failed to create /data/dispatcher"
@@ -66,39 +134,16 @@ if ! sudo docker volume inspect dispatcher-data >/dev/null 2>&1; then
         dispatcher-data >/dev/null || die "Failed to create dispatcher-data docker volume"
 fi
 
-info "Ensuring dispatcher certificate exists"
-mkdir -p "$CERT_DIR" || die "Failed to create $CERT_DIR"
+ensure_certificate "dispatcher" "dispatcher-bot"
+ensure_certificate "workflow-mcp" "workflow-mcp"
 
-if [ -d "$CERT_FILE" ]; then
-    if [ -z "$(ls -A "$CERT_FILE" 2>/dev/null)" ]; then
-        rmdir "$CERT_FILE" || die "Failed to remove empty directory at $CERT_FILE"
-    else
-        die "$CERT_FILE exists as a non-empty directory; remove or rename it, then rerun update"
-    fi
-fi
+info "Setting owner of workflow-mcp mounted files to $WORKFLOW_MCP_OWNER"
+# Owner only, not mode, because the files may hold secrets; applied on every run so existing files are corrected too
+sudo chown "$WORKFLOW_MCP_OWNER" "$BASEDIR/workflow-mcp/appsettings-local.json" "$CERT_DIR/workflow-mcp.pfx" || die "Failed to set owner of workflow-mcp mounted files to $WORKFLOW_MCP_OWNER"
 
-if [ ! -f "$CERT_FILE" ]; then
-    TMP_KEY="$CERT_DIR/dispatcher.key"
-    TMP_CRT="$CERT_DIR/dispatcher.crt"
-
-    openssl req -x509 -nodes -newkey rsa:4096 \
-        -keyout "$TMP_KEY" \
-        -out "$TMP_CRT" \
-        -days 3650 \
-        -subj "/CN=dispatcher-bot" || die "Failed to generate self-signed certificate"
-
-    openssl pkcs12 -export \
-        -out "$CERT_FILE" \
-        -inkey "$TMP_KEY" \
-        -in "$TMP_CRT" \
-        -passout pass: || die "Failed to generate $CERT_FILE"
-
-    rm -f "$TMP_KEY" "$TMP_CRT" || die "Failed to remove temporary certificate files"
-    chmod 600 "$CERT_FILE" || die "Failed to set permissions on $CERT_FILE"
-fi
-
-info "Configuring firewall rules for TCP port 3000 (private networks only)"
+info "Configuring firewall rules for TCP ports 3000 and 8091 (private networks only)"
 open_port_for_private_networks "3000"
+open_port_for_private_networks "8091"
 sudo firewall-cmd --reload || die "Failed to reload firewall"
 
 info "Updating docker"
