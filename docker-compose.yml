@@ -8,7 +8,8 @@ services:
     restart: always
     environment:
       WATCHTOWER_NOTIFICATIONS_HOSTNAME: notification-bot
-      WATCHTOWER_POLL_INTERVAL: 60
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_SCHEDULE: "${WATCHTOWER_SCHEDULE:-0 * * * * *}"
 
   notification-bot:
     container_name: notification-bot

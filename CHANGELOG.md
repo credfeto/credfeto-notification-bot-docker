@@ -25,6 +25,7 @@ Please ADD ALL Changes to the UNRELEASED SECTION and not a specific release
 - github-api-proxy always publishes host port 3000, matching the port update always opens in the firewall, so a PORT override can no longer leave the proxy unreachable on the opened port
 - install and update remove an empty directory that Docker created in place of a missing bind-mounted config file or TLS certificate, stop with an actionable message when it is not empty, and tell the operator to force-recreate the containers once the file exists
 ### Changed
+- Watchtower now uses a configurable WATCHTOWER_SCHEDULE cron (default every minute) instead of a fixed poll interval, and cleans up old images after updates
 ### Deprecated
 ### Removed
 ### Deployment Changes
