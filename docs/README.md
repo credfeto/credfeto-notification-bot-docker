@@ -18,3 +18,14 @@ preserved in git history — see PRs #14, #15, #18, #19 and issue #20 (the
 revert) — and the lessons that remain relevant to this docker-based setup
 are kept in `ai/local/deployment-troubleshooting.instructions.md` (marked
 historical where podman-specific).
+
+## Watchtower configuration
+
+Watchtower is configured in `docker-compose.yml`:
+
+- `WATCHTOWER_SCHEDULE` is a 6-field cron expression (seconds first). It
+  defaults to `0 * * * * *` (every minute). To override it, copy
+  `env.example` to `.env` next to `docker-compose.yml` and set
+  `WATCHTOWER_SCHEDULE` there, for example `WATCHTOWER_SCHEDULE=0 */5 * * * *`
+  for every five minutes. `.env` is git-ignored and must never be committed.
+- `WATCHTOWER_CLEANUP` is `true`, so old images are removed after an update.
