@@ -17,6 +17,7 @@ Please ADD ALL Changes to the UNRELEASED SECTION and not a specific release
 - update generates a self-signed TLS certificate for workflow-mcp, owned by the container's non-root user so the service can read it, and opens port 8091 in the firewall for private networks only
 - workflow-mcp runs with a read-only root filesystem, all Linux capabilities dropped and no-new-privileges set, so a compromised container has less scope to cause harm
 ### Fixed
+- install fills in the checkout path in credfeto-notification-bot.service instead of shipping a hardcoded /opt/credfeto-notification-bot-docker, so the update timer works from any checkout location (it failed every run with "No such file or directory" when the repo lived elsewhere, e.g. /root)
 - update now checks that the checkout is root-owned before pulling, with an actionable error, instead of silently failing at git's dubious-ownership check every timer tick
 - Removed NoNewPrivileges=yes from credfeto-notification-bot.service, which blocked rootless podman's newuidmap/newgidmap from creating a user namespace on every reboot, causing the containers to fail to start
 - Removed PrivateTmp=yes from credfeto-notification-bot.service - rootless podman's long-lived pause process could end up bound to a private /tmp mount torn down by a later restart, breaking image pulls with no automatic recovery

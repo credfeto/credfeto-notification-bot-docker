@@ -8,5 +8,5 @@ Type=oneshot
 IOSchedulingClass=idle
 CPUSchedulingPolicy=idle
 
-WorkingDirectory=/opt/credfeto-notification-bot-docker
-ExecStart=/opt/credfeto-notification-bot-docker/update
+WorkingDirectory=@BASEDIR@
+ExecStart=@BASEDIR@/update

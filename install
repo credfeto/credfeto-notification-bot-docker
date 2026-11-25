@@ -48,7 +48,12 @@ require_mount_file "$BASEDIR/proxy/credentials.json" "Missing proxy/credentials.
 chmod 644 "$BASEDIR/proxy/credentials.json" || die "Failed to set permissions on proxy/credentials.json"
 
 info "Updating systemd scripts"
-sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.service" /etc/systemd/system/credfeto-notification-bot.service || die "Failed to install service unit"
+case "$BASEDIR" in
+    *"|"*|*"&"*|*"\\"*) die "Checkout path $BASEDIR contains a character the unit template cannot substitute (| & or \\)" ;;
+esac
+# The unit points at this checkout, wherever it lives, rather than a fixed path
+sed "s|@BASEDIR@|$BASEDIR|g" "$BASEDIR/systemd-unit/credfeto-notification-bot.service" | sudo tee /etc/systemd/system/credfeto-notification-bot.service >/dev/null || die "Failed to install service unit"
+sudo chmod 644 /etc/systemd/system/credfeto-notification-bot.service || die "Failed to set permissions on service unit"
 sudo cp "$BASEDIR/systemd-unit/credfeto-notification-bot.timer" /etc/systemd/system/credfeto-notification-bot.timer || die "Failed to install timer unit"
 
 info "Reloading systemd"
