@@ -15,7 +15,7 @@ services:
     container_name: notification-bot
     hostname: notification-bot
     image: ghcr.io/credfeto/notification-bot:latest
-    restart: unless-stopped
+    restart: always
     stop_grace_period: 500s
     stop_signal: SIGINT
     volumes:
@@ -25,7 +25,7 @@ services:
     container_name: dispatcher-bot
     hostname: dispatcher-bot
     image: ghcr.io/credfeto/dispatcher-bot:latest
-    restart: unless-stopped
+    restart: always
     stop_grace_period: 500s
     stop_signal: SIGINT
     ports:
@@ -40,7 +40,7 @@ services:
     container_name: workflow-mcp
     hostname: workflow-mcp
     image: ghcr.io/credfeto/workflow-mcp:latest
-    restart: unless-stopped
+    restart: always
     stop_grace_period: 500s
     stop_signal: SIGINT
     read_only: true
@@ -60,7 +60,7 @@ services:
     container_name: github-api-proxy
     hostname: github-api-proxy
     image: ghcr.io/credfeto/github-api-proxy:latest
-    restart: unless-stopped
+    restart: always
     stop_grace_period: 500s
     stop_signal: SIGINT
     ports:
